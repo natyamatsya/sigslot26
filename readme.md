@@ -10,7 +10,7 @@ This fork (`sigslot26`) builds on [palacaze/sigslot](https://github.com/palacaze
 - **std::execution (P2300) integration** - Signals can be used as senders via `sigslot::async::as_sender()`
 - **Coroutine support** - Signals are awaitable with `co_await sigslot::async::make_awaitable(sig)`
 - **Qt async adapters** - `connect_on_event_loop()`, `connect_on_thread()`, `as_qfuture()`
-- **Catch2 test framework** - Replaces doctest for unit testing
+- **Catch2 test framework** - Replaces assert-based tests with Catch2
 - **CI improvements** - Multi-platform builds with sanitizer coverage
 
 ## Features
@@ -133,23 +133,23 @@ connected beforehand. Notice how The library handles diverse forms of callables.
 
 ```cpp
 #include <sigslot/signal.hpp>
-#include <iostream>
+#include <print>
 
-void f() { std::cout << "free function\n"; }
+void f() { std::println("free function"); }
 
 struct s {
-    void m() { std::cout << "member function\n"; }
-    static void sm() { std::cout << "static member function\n";  }
+    void m() { std::println("member function"); }
+    static void sm() { std::println("static member function"); }
 };
 
 struct o {
-    void operator()() { std::cout << "function object\n"; }
+    void operator()() { std::println("function object"); }
 };
 
 int main() {
     s d;
-    auto lambda = []() { std::cout << "lambda\n"; };
-    auto gen_lambda = [](auto && ...a) { std::cout << "generic lambda\n"; };
+    auto lambda = []() { std::println("lambda"); };
+    auto gen_lambda = [](auto&&...) { std::println("generic lambda"); };
 
     // declare a signal instance with no arguments
     sigslot::signal<> sig;
@@ -181,14 +181,14 @@ emits values instead. A signal can emit any number of arguments, below.
 
 ```cpp
 #include <sigslot/signal.hpp>
-#include <iostream>
+#include <print>
 #include <string>
 
 struct foo {
     // Notice how we accept a double as first argument here.
     // This is fine because float is convertible to double.
     // 's' is a reference and can thus be modified.
-    void bar(double d, int i, bool b, std::string &s) {
+    void bar(double d, int i, bool b, std::string& s) {
         s = b ? std::to_string(i) : std::to_string(d);
     }
 };
@@ -196,8 +196,8 @@ struct foo {
 // Function objects can cope with default arguments and overloading.
 // It does not work with static and member functions.
 struct obj {
-    void operator()(float, int, bool, std::string &, int = 0) {
-        std::cout << "I was here\n";
+    void operator()(float, int, bool, std::string&, int = 0) {
+        std::println("I was here");
     }
 
     void operator()() {}
@@ -208,12 +208,9 @@ int main() {
     sigslot::signal<float, int, bool, std::string&> sig;
 
     // a generic lambda that prints its arguments to stdout
-    auto printer = [] (auto a, auto && ...args) {
-        std::cout << a;
-        (void)std::initializer_list<int>{
-            ((void)(std::cout << " " << args), 1)...
-        };
-        std::cout << "\n";
+    auto printer = [](auto a, auto&&... args) {
+        std::println("{}", a);
+        (std::println("{}", args), ...);
     };
 
     // connect the slots
@@ -663,15 +660,15 @@ to another with compatible arguments.
 
 ```cpp
 #include <sigslot/signal.hpp>
-#include <iostream>
+#include <print>
 
 int main() {
     sigslot::signal<int> sig1;
     sigslot::signal<double> sig2;
 
     sigslot::connect(sig1, sig2);
-    sigslot::connect(sig2, [] (double d) { std::cout << "got " << d << std::endl; });
-    sig(1);
+    sigslot::connect(sig2, [](double d) { std::println("got {}", d); });
+    sig1(1);
 
     return 0;
 }
