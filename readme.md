@@ -112,6 +112,38 @@ add_executable(MyExe main.cpp)
 target_link_libraries(MyExe PRIVATE Pal::Sigslot)
 ```
 
+## Demos
+
+The `example/async/` folder contains stress test demos showcasing async and reactive features:
+
+### HFT Reactive Demo (`async/reactive-demo.cpp`)
+
+A high-frequency trading simulation demonstrating reactive extensions. Simulates multiple stock exchanges emitting rapid price ticks with a shared market factor creating realistic correlation (~0.85) between stocks.
+
+```bash
+# Build and run
+cmake --build build --target async-reactive-demo
+./build/example/async-reactive-demo [stdexec|threads] [num_exchanges] [duration_seconds]
+
+# Examples
+./build/example/async-reactive-demo              # Default: hardware_concurrency exchanges, 10s
+./build/example/async-reactive-demo 32 5         # 32 exchanges, 5 seconds
+./build/example/async-reactive-demo stdexec 64 10  # All 64 companies, stdexec mode
+```
+
+**Reactive operators demonstrated:** `throttle`, `distinct`, `filter`, `scan`, `map`, `combine_latest`, `merge`
+
+### Monte Carlo Stress Test (`async/stress-test.cpp`)
+
+A parallel Monte Carlo π estimation demonstrating thread safety and connection management under high contention. Tests signal emission, slot invocation, and connection churn across multiple threads.
+
+```bash
+cmake --build build --target async-stress-test
+./build/example/async-stress-test [stdexec|threads|coroutines] [num_workers] [samples_per_worker]
+```
+
+> **Note:** These demos are for illustration purposes only and do not aim for production-grade performance requirements.
+
 ## Documentation
 
 Sigslot implements the signal-slot construct popular in UI frameworks, making it

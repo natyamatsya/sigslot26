@@ -1049,6 +1049,17 @@ struct take_while_op {
 
 // Note: merged_signal for heterogeneous signals removed - use merged_typed_signal instead
 
+// Forward declaration
+template <typename T>
+class merged_typed_signal;
+
+// Signal traits for merged_typed_signal
+template <typename T>
+struct detail::signal_traits<merged_typed_signal<T>> {
+    using signal_type = signal<T>;
+    using tuple_type = std::tuple<T>;
+};
+
 /**
  * @brief A signal that merges emissions from signals with same arg type
  */
