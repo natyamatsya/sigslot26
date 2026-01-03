@@ -9,9 +9,12 @@
 
 // Qt requires QCoreApplication for event loop
 // Create a static instance for tests
+// NOLINTBEGIN(cppcoreguidelines-pro-type-const-cast,cppcoreguidelines-avoid-non-const-global-variables)
 static int argc = 1;
-static char* argv[] = {(char*)"qt-async-test", nullptr};
+static char arg0[] = "qt-async-test";  // NOLINT(modernize-avoid-c-arrays)
+static char* argv[] = {arg0, nullptr};  // NOLINT(modernize-avoid-c-arrays)
 static QCoreApplication app(argc, argv);
+// NOLINTEND(cppcoreguidelines-pro-type-const-cast,cppcoreguidelines-avoid-non-const-global-variables)
 
 // =============================================================================
 // Event Loop Integration Tests
@@ -159,15 +162,20 @@ TEST_CASE("connect_on_thread", "[qt][async][thread]") {
     QThread workerThread;
     workerThread.start();
 
+    // Wait for thread to start its event loop
+    QThread::msleep(50);
+
     sigslot::qt::connect_on_thread(sig, &workerThread, [&](int x) {
-        sum.store(sum.load() + x, std::memory_order_release);
+        sum.fetch_add(x, std::memory_order_release);
     });
 
     sig(50);
 
-    // Give thread time to process
-    QThread::msleep(50);
-    QCoreApplication::processEvents();
+    // Give thread time to process the event
+    for (int i = 0; i < 20 && sum.load(std::memory_order_acquire) != 50; ++i) {
+        QThread::msleep(10);
+        QCoreApplication::processEvents();
+    }
 
     workerThread.quit();
     workerThread.wait();

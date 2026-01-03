@@ -10,6 +10,7 @@
  */
 
 #include <catch2/catch_test_macros.hpp>
+#include <catch2/catch_approx.hpp>
 #include <sigslot/signal.hpp>
 #include <sigslot/async/async.hpp>
 #include <thread>
@@ -64,7 +65,7 @@ TEST_CASE("Awaitable with multiple arguments", "[coroutine][await]") {
     REQUIRE(received);
     REQUIRE(i == 100);
     REQUIRE(s == "test");
-    REQUIRE(d == 3.14);
+    REQUIRE(d == Catch::Approx(3.14));
 }
 
 TEST_CASE("Timeout API exists", "[coroutine][timeout]") {

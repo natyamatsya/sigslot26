@@ -74,9 +74,9 @@ public:
         void start() noexcept {
             auto state = state_;
             try {
-                std::lock_guard lock(state->mtx);
+                std::lock_guard<std::mutex> lock(state->mtx);
                 state->conn = sig_->connect([state](Args... args) {
-                    std::lock_guard lock(state->mtx);
+                    std::lock_guard<std::mutex> inner_lock(state->mtx);
                     if (!state->completed) {
                         state->completed = true;
                         state->conn.disconnect();
@@ -84,7 +84,7 @@ public:
                     }
                 });
             } catch (...) {
-                std::lock_guard lock(state->mtx);
+                std::lock_guard<std::mutex> err_lock(state->mtx);
                 if (!state->completed) {
                     state->completed = true;
                     stdexec::set_stopped(std::move(state->rcv));
@@ -240,9 +240,9 @@ auto as_stream(signal<Args...>& sig) {
  * @return A scoped_connection managing the subscription
  */
 template<typename... Args, stdexec::scheduler Scheduler, typename Slot>
-auto connect_on(signal<Args...>& sig, Scheduler sched, Slot&& slot) {
-    return sig.connect([sched = std::move(sched),
-                        slot = std::forward<Slot>(slot)](Args... args) mutable {
+auto connect_on(signal<Args...>& sig, Scheduler scheduler, Slot&& slot_fn) {
+    return sig.connect([sched = std::move(scheduler),
+                        slot = std::forward<Slot>(slot_fn)](Args... args) mutable {
         // Capture args and execute slot on scheduler
         auto work = stdexec::then(stdexec::schedule(sched),
                                   [&slot, ... captured_args = std::forward<Args>(args)]() mutable {
@@ -265,10 +265,10 @@ auto connect_on(signal<Args...>& sig, Scheduler sched, Slot&& slot) {
  * @return A scoped_connection managing the subscription
  */
 template<typename... Args, stdexec::scheduler Scheduler, typename Slot>
-auto connect_on_async(signal<Args...>& sig, ::exec::async_scope& scope, Scheduler sched,
-                      Slot&& slot) {
-    return sig.connect([&scope, sched = std::move(sched),
-                        slot = std::forward<Slot>(slot)](Args... args) mutable {
+auto connect_on_async(signal<Args...>& sig, ::exec::async_scope& scope, Scheduler scheduler,
+                      Slot&& slot_fn) {
+    return sig.connect([&scope, sched = std::move(scheduler),
+                        slot = std::forward<Slot>(slot_fn)](Args... args) mutable {
         auto work = stdexec::then(stdexec::schedule(sched),
                                   [&slot, ... captured_args = std::forward<Args>(args)]() mutable {
                                       slot(std::forward<Args>(captured_args)...);
@@ -337,10 +337,10 @@ auto as_awaitable(signal<Args...>& sig) {
  *   });
  */
 template<typename... Args, stdexec::scheduler Scheduler, typename CoroSlot>
-auto connect_coro_on(signal<Args...>& sig, ::exec::async_scope& scope, Scheduler sched,
-                     CoroSlot&& coro_slot) {
-    return sig.connect([&scope, sched = std::move(sched),
-                        coro_slot = std::forward<CoroSlot>(coro_slot)](Args... args) mutable {
+auto connect_coro_on(signal<Args...>& sig, ::exec::async_scope& scope, Scheduler scheduler,
+                     CoroSlot&& coro_slot_fn) {
+    return sig.connect([&scope, sched = std::move(scheduler),
+                        coro_slot = std::forward<CoroSlot>(coro_slot_fn)](Args... args) mutable {
         // Create work that schedules the coroutine execution
         auto work =
             stdexec::then(stdexec::schedule(sched),

@@ -148,13 +148,13 @@ TEST_CASE("Signal sender with let_value", "[execution]") {
 TEST_CASE("Signal sender - multiple concurrent waiters", "[execution][threading]") {
     sigslot::signal<int> sig;
     std::atomic<int> completed{0};
-    constexpr int NUM_WAITERS = 5;
+    constexpr size_t NUM_WAITERS = 5;
 
     std::vector<std::thread> waiters;
     std::vector<int> results(NUM_WAITERS, 0);
 
     // Start multiple waiters
-    for (int i = 0; i < NUM_WAITERS; ++i) {
+    for (size_t i = 0; i < NUM_WAITERS; ++i) {
         waiters.emplace_back([&, i]() {
             auto sender = sigslot::async::as_sender(sig);
             auto [value] = stdexec::sync_wait(std::move(sender)).value();
@@ -173,8 +173,8 @@ TEST_CASE("Signal sender - multiple concurrent waiters", "[execution][threading]
     for (auto& t : waiters)
         t.join();
 
-    REQUIRE(completed == NUM_WAITERS);
-    for (int i = 0; i < NUM_WAITERS; ++i)
+    REQUIRE(completed == static_cast<int>(NUM_WAITERS));
+    for (size_t i = 0; i < NUM_WAITERS; ++i)
         REQUIRE(results[i] == 100);
 }
 

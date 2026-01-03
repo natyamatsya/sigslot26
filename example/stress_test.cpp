@@ -61,38 +61,38 @@ struct stress_signals {
 // Progress aggregator - receives signals from all workers
 class progress_aggregator {
 public:
-    explicit progress_aggregator(int num_workers)
+    explicit progress_aggregator(unsigned int num_workers)
         : num_workers_(num_workers)
         , worker_hits_(num_workers, 0)
         , worker_samples_(num_workers, 0)
         , completed_(0) {}
 
     void on_worker_progress(int worker_id, uint64_t samples, uint64_t /*total*/, uint64_t hits) {
-        std::lock_guard lock(mutex_);
-        worker_hits_[worker_id] = hits;
-        worker_samples_[worker_id] = samples;
+        std::lock_guard<std::mutex> lock(mutex_);
+        worker_hits_[static_cast<size_t>(worker_id)] = hits;
+        worker_samples_[static_cast<size_t>(worker_id)] = samples;
     }
 
     void on_worker_complete(int /*worker_id*/, double pi_estimate) {
-        std::lock_guard lock(mutex_);
+        std::lock_guard<std::mutex> lock(mutex_);
         completed_++;
         final_estimates_.push_back(pi_estimate);
     }
 
     std::tuple<double, uint64_t, int> get_aggregate() const {
-        std::lock_guard lock(mutex_);
+        std::lock_guard<std::mutex> lock(mutex_);
         uint64_t total_hits = 0;
         uint64_t total_samples = 0;
-        for (int i = 0; i < num_workers_; ++i) {
+        for (size_t i = 0; i < num_workers_; ++i) {
             total_hits += worker_hits_[i];
             total_samples += worker_samples_[i];
         }
-        double pi = total_samples > 0 ? 4.0 * total_hits / total_samples : 0.0;
+        double pi = total_samples > 0 ? 4.0 * static_cast<double>(total_hits) / static_cast<double>(total_samples) : 0.0;
         return {pi, total_samples, completed_};
     }
 
 private:
-    int num_workers_;
+    size_t num_workers_;
     mutable std::mutex mutex_;
     std::vector<uint64_t> worker_hits_;
     std::vector<uint64_t> worker_samples_;
@@ -103,7 +103,7 @@ private:
 // Worker that computes Monte Carlo samples
 void monte_carlo_worker(int worker_id, uint64_t num_samples, stress_signals& signals) {
     std::random_device rd;
-    std::mt19937_64 gen(rd() + worker_id);
+    std::mt19937_64 gen(rd() + static_cast<unsigned int>(worker_id));
     std::uniform_real_distribution<double> dist(0.0, 1.0);
 
     uint64_t hits = 0;
@@ -122,23 +122,23 @@ void monte_carlo_worker(int worker_id, uint64_t num_samples, stress_signals& sig
     // Final report
     signals.worker_progress(worker_id, num_samples, num_samples, hits);
 
-    double pi_estimate = 4.0 * hits / num_samples;
+    double pi_estimate = 4.0 * static_cast<double>(hits) / static_cast<double>(num_samples);
     signals.worker_complete(worker_id, pi_estimate);
 }
 
 // Display updater
-void display_progress(const progress_aggregator& aggregator, int num_workers,
+void display_progress(const progress_aggregator& aggregator, uint64_t num_workers,
                       uint64_t total_samples, std::atomic<bool>& done) {
-    const int bar_width = 40;
+    constexpr size_t bar_width = 40;
 
     while (!done) {
         auto [pi, samples, completed] = aggregator.get_aggregate();
-        double progress = static_cast<double>(samples) / (num_workers * total_samples);
-        int filled = static_cast<int>(progress * bar_width);
+        double progress = static_cast<double>(samples) / static_cast<double>(num_workers * total_samples);
+        auto filled = static_cast<size_t>(progress * static_cast<double>(bar_width));
 
         // Build progress bar
         std::string bar(bar_width, ' ');
-        for (int i = 0; i < filled && i < bar_width; ++i)
+        for (size_t i = 0; i < filled && i < bar_width; ++i)
             bar[i] = '=';
         if (filled < bar_width)
             bar[filled] = '>';
@@ -181,12 +181,13 @@ void connection_churn_test(stress_signals& signals, std::atomic<bool>& done,
 
 enum class execution_mode { stdexec, threads, coroutines };
 
-void run_with_threads(stress_signals& signals, progress_aggregator& aggregator, int num_workers,
+void run_with_threads(stress_signals& signals, progress_aggregator& aggregator, unsigned int num_workers,
                       uint64_t samples_per_worker, std::atomic<bool>& workers_done,
                       std::atomic<bool>& display_done, std::atomic<uint64_t>& churn_count) {
     // Start display thread
-    std::thread display_thread(display_progress, std::cref(aggregator), num_workers,
-                               samples_per_worker, std::ref(display_done));
+    std::thread display_thread(display_progress, std::cref(aggregator),
+                               static_cast<uint64_t>(num_workers), samples_per_worker,
+                               std::ref(display_done));
 
     // Start connection churn threads
     std::vector<std::thread> churn_threads;
@@ -197,8 +198,8 @@ void run_with_threads(stress_signals& signals, progress_aggregator& aggregator, 
 
     // Start worker threads
     std::vector<std::thread> workers;
-    for (int i = 0; i < num_workers; ++i) {
-        workers.emplace_back(monte_carlo_worker, i, samples_per_worker, std::ref(signals));
+    for (unsigned int i = 0; i < num_workers; ++i) {
+        workers.emplace_back(monte_carlo_worker, static_cast<int>(i), samples_per_worker, std::ref(signals));
     }
 
     // Wait for workers
@@ -218,16 +219,17 @@ void run_with_threads(stress_signals& signals, progress_aggregator& aggregator, 
 }
 
 #if SIGSLOT_EXECUTION_AVAILABLE
-void run_with_stdexec(stress_signals& signals, progress_aggregator& aggregator, int num_workers,
+void run_with_stdexec(stress_signals& signals, progress_aggregator& aggregator, unsigned int num_workers,
                       uint64_t samples_per_worker, std::atomic<bool>& workers_done,
                       std::atomic<bool>& display_done, std::atomic<uint64_t>& churn_count) {
-    exec::static_thread_pool pool(num_workers + 4); // Extra threads for churn + display
+    exec::static_thread_pool pool(static_cast<std::uint32_t>(num_workers + 4)); // Extra threads for churn + display
     auto sched = pool.get_scheduler();
     exec::async_scope worker_scope;
 
     // Start display thread
-    std::thread display_thread(display_progress, std::cref(aggregator), num_workers,
-                               samples_per_worker, std::ref(display_done));
+    std::thread display_thread(display_progress, std::cref(aggregator),
+                               static_cast<uint64_t>(num_workers), samples_per_worker,
+                               std::ref(display_done));
 
     // Start connection churn threads (separate from worker scope)
     std::vector<std::thread> churn_threads;
@@ -244,10 +246,10 @@ void run_with_stdexec(stress_signals& signals, progress_aggregator& aggregator, 
     }
 
     // Spawn workers using stdexec
-    for (int i = 0; i < num_workers; ++i) {
+    for (unsigned int i = 0; i < num_workers; ++i) {
         worker_scope.spawn(
             stdexec::then(stdexec::schedule(sched), [i, samples_per_worker, &signals]() {
-                monte_carlo_worker(i, samples_per_worker, signals);
+                monte_carlo_worker(static_cast<int>(i), samples_per_worker, signals);
             }));
     }
 
@@ -268,9 +270,9 @@ void run_with_stdexec(stress_signals& signals, progress_aggregator& aggregator, 
 
 // Coroutine that awaits worker completions using co_await
 sigslot::async::task<void> completion_collector(sigslot::signal<int, double>& complete_signal,
-                                                std::vector<double>& estimates, int expected_count,
+                                                std::vector<double>& estimates, unsigned int expected_count,
                                                 std::atomic<bool>& all_done) {
-    for (int i = 0; i < expected_count; ++i) {
+    for (unsigned int i = 0; i < expected_count; ++i) {
         // co_await the next worker completion signal
         auto awaiter = sigslot::async::simple_signal_awaiter(&complete_signal);
         auto [worker_id, pi_estimate] = co_await awaiter;
@@ -284,7 +286,7 @@ sigslot::async::task<void> completion_collector(sigslot::signal<int, double>& co
 sigslot::async::task<void> coro_monte_carlo_worker(int worker_id, uint64_t num_samples,
                                                    stress_signals& signals) {
     std::random_device rd;
-    std::mt19937_64 gen(rd() + worker_id);
+    std::mt19937_64 gen(rd() + static_cast<unsigned int>(worker_id));
     std::uniform_real_distribution<double> dist(0.0, 1.0);
 
     uint64_t hits = 0;
@@ -302,22 +304,23 @@ sigslot::async::task<void> coro_monte_carlo_worker(int worker_id, uint64_t num_s
 
     signals.worker_progress(worker_id, num_samples, num_samples, hits);
 
-    double pi_estimate = 4.0 * hits / num_samples;
+    double pi_estimate = 4.0 * static_cast<double>(hits) / static_cast<double>(num_samples);
     signals.worker_complete(worker_id, pi_estimate);
 
     co_return;
 }
 
-void run_with_coroutines(stress_signals& signals, progress_aggregator& aggregator, int num_workers,
+void run_with_coroutines(stress_signals& signals, progress_aggregator& aggregator, unsigned int num_workers,
                          uint64_t samples_per_worker, std::atomic<bool>& workers_done,
                          std::atomic<bool>& display_done, std::atomic<uint64_t>& churn_count) {
-    exec::static_thread_pool pool(num_workers + 4);
+    exec::static_thread_pool pool(static_cast<std::uint32_t>(num_workers + 4));
     auto sched = pool.get_scheduler();
     exec::async_scope worker_scope;
 
     // Start display thread
-    std::thread display_thread(display_progress, std::cref(aggregator), num_workers,
-                               samples_per_worker, std::ref(display_done));
+    std::thread display_thread(display_progress, std::cref(aggregator),
+                               static_cast<uint64_t>(num_workers), samples_per_worker,
+                               std::ref(display_done));
 
     // Connect progress aggregator
     signals.worker_progress.connect(&progress_aggregator::on_worker_progress, &aggregator, 0);
@@ -343,11 +346,11 @@ void run_with_coroutines(stress_signals& signals, progress_aggregator& aggregato
     }
 
     // Spawn coroutine workers on the thread pool
-    for (int i = 0; i < num_workers; ++i) {
+    for (unsigned int i = 0; i < num_workers; ++i) {
         worker_scope.spawn(
             stdexec::then(stdexec::schedule(sched), [i, samples_per_worker, &signals]() {
                 // Launch coroutine worker
-                auto task = coro_monte_carlo_worker(i, samples_per_worker, signals);
+                auto task = coro_monte_carlo_worker(static_cast<int>(i), samples_per_worker, signals);
             }));
     }
 
@@ -373,7 +376,7 @@ void run_with_coroutines(stress_signals& signals, progress_aggregator& aggregato
         double avg = 0;
         for (auto e : pi_estimates)
             avg += e;
-        avg /= pi_estimates.size();
+        avg /= static_cast<double>(pi_estimates.size());
         std::cout << "  (Coroutine collected " << pi_estimates.size() << " estimates, avg: " << avg
                   << ")\n";
     }
@@ -407,7 +410,7 @@ int main(int argc, char* argv[]) {
 
     std::cout << "\n\n\n\n"; // Make room for display
 
-    const int num_workers = std::thread::hardware_concurrency();
+    const unsigned int num_workers = std::thread::hardware_concurrency();
     const uint64_t samples_per_worker = 10'000'000;
 
     const char* mode_name = mode == execution_mode::stdexec      ? "stdexec"
@@ -417,7 +420,7 @@ int main(int argc, char* argv[]) {
     std::cout << color::bold << "sigslot26 Stress Test" << color::reset << "\n";
     std::cout << "Mode: " << color::cyan << mode_name << color::reset << "\n";
     std::cout << "Using " << num_workers << " worker threads\n";
-    std::cout << "Total samples: " << (num_workers * samples_per_worker) << "\n\n";
+    std::cout << "Total samples: " << (static_cast<uint64_t>(num_workers) * samples_per_worker) << "\n\n";
 
     stress_signals signals;
     progress_aggregator aggregator(num_workers);
@@ -466,7 +469,7 @@ int main(int argc, char* argv[]) {
               << std::abs(final_pi - std::numbers::pi) << color::reset << "\n";
     std::cout << "  Duration:         " << duration.count() << " ms\n";
     std::cout << "  Throughput:       " << std::fixed << std::setprecision(1)
-              << (total_samples / 1e6) / (duration.count() / 1000.0) << " M samples/sec\n";
+              << (static_cast<double>(total_samples) / 1e6) / (static_cast<double>(duration.count()) / 1000.0) << " M samples/sec\n";
     std::cout << "  Connect/disconnect churn: " << churn_count << " operations\n";
     std::cout << "  Slot count at end: " << signals.worker_progress.slot_count() << "\n";
 

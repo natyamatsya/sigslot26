@@ -19,12 +19,12 @@ constexpr size_t NUM_SLOTS = 1000;
 using res_container = std::vector<int32_t>;
 
 
-static auto pusher(int pos) {
-    return [pos = std::move(pos)](res_container& c) { c.push_back(pos); };
+static auto pusher(int position) {
+    return [pos = std::move(position)](res_container& c) { c.push_back(pos); };
 }
 
-static auto adder(int v) {
-    return [v = std::move(v)](int& s) { s += v; };
+static auto adder(int value) {
+    return [v = std::move(value)](int& s) { s += v; };
 }
 
 TEST_CASE("Random Groups", "[slots_groups]") {

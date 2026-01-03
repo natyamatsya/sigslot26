@@ -73,7 +73,7 @@ public:
 
     invoke_event_base()
         : QEvent(EventType) {}
-    virtual ~invoke_event_base() = default;
+    ~invoke_event_base() override = default;
     virtual void invoke() = 0;
 
     void mark_ready() { ready_.store(true, std::memory_order_release); }

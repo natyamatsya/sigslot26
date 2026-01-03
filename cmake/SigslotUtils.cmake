@@ -28,7 +28,9 @@ target_compile_options(Sigslot_CommonWarnings INTERFACE
     $<$<BOOL:${SIGSLOT_COMPILER_CLANG_OR_GCC}>:-fdiagnostics-color=always;-pipe>
     $<$<BOOL:${SIGSLOT_COMPILER_CLANGCL}>:
         -Wno-c++98-compat;-Wno-c++98-compat-pedantic;-Wno-documentation;-Wno-missing-prototypes;
-        -Wno-reserved-identifier;-Wno-reserved-macro-identifier;-Wno-unsafe-buffer-usage>
+        -Wno-reserved-identifier;-Wno-reserved-macro-identifier;-Wno-unsafe-buffer-usage;
+        -Wno-ctad-maybe-unsupported;-Wno-c++20-compat;-Wno-global-constructors;-Wno-exit-time-destructors;
+        -Wno-switch-default>
 )
 
 add_library(Sigslot_ManyWarnings INTERFACE)
