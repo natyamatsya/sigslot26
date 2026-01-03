@@ -1,5 +1,9 @@
 # Sigslot, a signal-slot library
 
+> **⚠️ EXPERIMENTAL - NOT PRODUCTION READY**
+>
+> Sigslot26 is an experimental C++23 migration of sigslot. This project is exploring modern C++23 features and is **not recommended for production use**. The library is under active development and APIs may change without notice.
+
 Sigslot is a header-only, thread safe implementation of signal-slots for C++.
 
 This fork (`sigslot26`) builds on [palacaze/sigslot](https://github.com/palacaze/sigslot) and [mousebyte/sigslot20](https://github.com/mousebyte/sigslot20), adding C++23 support and async integration.
@@ -9,6 +13,7 @@ This fork (`sigslot26`) builds on [palacaze/sigslot](https://github.com/palacaze
 - **C++23 requirement** - Uses `std::print`, deducing this, and other C++23 features
 - **std::execution (P2300) integration** - Signals can be used as senders via `sigslot::async::as_sender()`
 - **Coroutine support** - Signals are awaitable with `co_await sigslot::async::make_awaitable(sig)`
+- **Reactive extensions** - `rx::map`, `rx::filter`, `rx::debounce`, `rx::observe_on`
 - **Qt async adapters** - `connect_on_event_loop()`, `connect_on_thread()`, `as_qfuture()`
 - **Catch2 test framework** - Replaces assert-based tests with Catch2
 - **CI improvements** - Multi-platform builds with sanitizer coverage

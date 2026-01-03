@@ -75,7 +75,7 @@ target_link_options(
     # We deactivate ICF on windows compilers because it interferes with signal
     # disconnection by making identical functions not unique.
     $<$<CXX_COMPILER_ID:MSVC>:/OPT:NOICF>
-    $<$<BOOL:${SIGSLOT_COMPILER_CLANGCL}>:/OPT:NOICF>
+    $<$<BOOL:${SIGSLOT_COMPILER_CLANGCL}>:-Xlinker;/OPT:NOICF>
 )
 target_link_libraries(sigslot INTERFACE Threads::Threads)
 set_target_properties(sigslot PROPERTIES EXPORT_NAME Sigslot)

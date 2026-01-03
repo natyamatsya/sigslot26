@@ -22,8 +22,9 @@ macro(pal_create_test target ut)
     target_compile_definitions(${target} PRIVATE $<$<CXX_COMPILER_ID:MSVC>:_SCL_SECURE_NO_WARNINGS>)
     
     # Discover Catch2 tests with timeout for async tests
-    if(target MATCHES "async-execution")
-        catch_discover_tests(${target} PROPERTIES TIMEOUT 30)
+    # TSan on macOS significantly slows down execution
+    if(target MATCHES "async")
+        catch_discover_tests(${target} PROPERTIES TIMEOUT 120)
     else()
         catch_discover_tests(${target})
     endif()
