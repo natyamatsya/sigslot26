@@ -16,7 +16,7 @@
 // NOLINTBEGIN(cppcoreguidelines-pro-type-const-cast,cppcoreguidelines-avoid-non-const-global-variables)
 static int argc = 1;
 static char arg0[] = "qt-async-test";  // NOLINT(modernize-avoid-c-arrays)
-static char* argv[] = {arg0, nullptr};  // NOLINT(modernize-avoid-c-arrays)
+static char* argv[] = {arg0, nullptr}; // NOLINT(modernize-avoid-c-arrays)
 static QCoreApplication app(argc, argv);
 // NOLINTEND(cppcoreguidelines-pro-type-const-cast,cppcoreguidelines-avoid-non-const-global-variables)
 
@@ -169,9 +169,8 @@ TEST_CASE("connect_on_thread", "[qt][async][thread]") {
     // Wait for thread to start its event loop
     QThread::msleep(50);
 
-    sigslot::qt::connect_on_thread(sig, &workerThread, [&](int x) {
-        sum.fetch_add(x, std::memory_order_release);
-    });
+    sigslot::qt::connect_on_thread(sig, &workerThread,
+                                   [&](int x) { sum.fetch_add(x, std::memory_order_release); });
 
     sig(50);
 

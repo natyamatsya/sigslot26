@@ -1636,8 +1636,7 @@ class signal_interface final {
 
     // NOLINTNEXTLINE(hicpp-noexcept-move,performance-noexcept-move-constructor)
     signal_interface(signal_interface&& o) /* not noexcept */
-        : m_sig(nullptr)
-    {
+        : m_sig(nullptr) {
 #if defined(__GNUC__) && !defined(__clang__)
 #pragma GCC diagnostic push
 #pragma GCC diagnostic ignored "-Wmaybe-uninitialized"

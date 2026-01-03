@@ -5,7 +5,7 @@
 
 #ifdef _MSC_VER
 #pragma warning(push)
-#pragma warning(disable: 4180)  // qualifier applied to function type has no meaning
+#pragma warning(disable : 4180) // qualifier applied to function type has no meaning
 #endif
 
 namespace sigslot::matchers {
