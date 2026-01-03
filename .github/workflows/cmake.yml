@@ -126,12 +126,14 @@ jobs:
         run: |
           set FETCH_FLAG=
           if "${{ steps.cache-deps.outputs.cache-hit }}"=="true" set FETCH_FLAG=-DFETCHCONTENT_FULLY_DISCONNECTED=ON
+          rem Repeat async tests 50x in CI to catch flaky race conditions
+          set REPEAT_FLAG=-DSIGSLOT_ASYNC_TEST_REPEAT=50
           if "%MATRIX_CONFIG_NAME%"=="Windows MSVC" (
             echo Configuring with MSVC and AddressSanitizer
-            cmake %GITHUB_WORKSPACE% -DCMAKE_BUILD_TYPE=%BUILD_TYPE% -DSIGSLOT_SANITIZE_ADDRESS=ON -DSIGSLOT_SANITIZE_UNDEFINED=ON %FETCH_FLAG% -G Ninja -Wno-dev
+            cmake %GITHUB_WORKSPACE% -DCMAKE_BUILD_TYPE=%BUILD_TYPE% -DSIGSLOT_SANITIZE_ADDRESS=ON -DSIGSLOT_SANITIZE_UNDEFINED=ON %FETCH_FLAG% %REPEAT_FLAG% -G Ninja -Wno-dev
           ) else (
             echo Configuring with clang-cl and ThreadSanitizer
-            cmake %GITHUB_WORKSPACE% -DCMAKE_BUILD_TYPE=%BUILD_TYPE% -DCMAKE_C_COMPILER=clang-cl -DCMAKE_CXX_COMPILER=clang-cl -DSIGSLOT_SANITIZE_THREAD=ON -DSIGSLOT_SANITIZE_UNDEFINED=ON %FETCH_FLAG% -G Ninja -Wno-dev
+            cmake %GITHUB_WORKSPACE% -DCMAKE_BUILD_TYPE=%BUILD_TYPE% -DCMAKE_C_COMPILER=clang-cl -DCMAKE_CXX_COMPILER=clang-cl -DSIGSLOT_SANITIZE_THREAD=ON -DSIGSLOT_SANITIZE_UNDEFINED=ON %FETCH_FLAG% %REPEAT_FLAG% -G Ninja -Wno-dev
           )
         env:
           MATRIX_CONFIG_NAME: ${{ matrix.config.name }}
@@ -149,15 +151,17 @@ jobs:
           if [[ "${{ steps.cache-deps.outputs.cache-hit }}" == "true" ]]; then
             FETCH_FLAG="-DFETCHCONTENT_FULLY_DISCONNECTED=ON"
           fi
+          # Repeat async tests 50x in CI to catch flaky race conditions
+          REPEAT_FLAG="-DSIGSLOT_ASYNC_TEST_REPEAT=50"
           if [[ "${{ matrix.config.name }}" == "Ubuntu gcc" ]]; then
             # GCC: Use both ThreadSanitizer and UBSan
-            cmake $GITHUB_WORKSPACE -DCMAKE_BUILD_TYPE=$BUILD_TYPE -DSIGSLOT_SANITIZE_THREAD=ON -DSIGSLOT_SANITIZE_UNDEFINED=ON $FETCH_FLAG -G Ninja -Wno-dev
+            cmake $GITHUB_WORKSPACE -DCMAKE_BUILD_TYPE=$BUILD_TYPE -DSIGSLOT_SANITIZE_THREAD=ON -DSIGSLOT_SANITIZE_UNDEFINED=ON $FETCH_FLAG $REPEAT_FLAG -G Ninja -Wno-dev
           elif [[ "${{ matrix.config.name }}" == "Ubuntu clang" || "${{ matrix.config.name }}" == "MacOS apple-clang" ]]; then
             # Clang: Use only ThreadSanitizer (UBSan+TSan causes stdexec hangs)
-            cmake $GITHUB_WORKSPACE -DCMAKE_BUILD_TYPE=$BUILD_TYPE -DSIGSLOT_SANITIZE_THREAD=ON $FETCH_FLAG -G Ninja -Wno-dev
+            cmake $GITHUB_WORKSPACE -DCMAKE_BUILD_TYPE=$BUILD_TYPE -DSIGSLOT_SANITIZE_THREAD=ON $FETCH_FLAG $REPEAT_FLAG -G Ninja -Wno-dev
           else
             # Fallback
-            cmake $GITHUB_WORKSPACE -DCMAKE_BUILD_TYPE=$BUILD_TYPE $FETCH_FLAG -G Ninja -Wno-dev
+            cmake $GITHUB_WORKSPACE -DCMAKE_BUILD_TYPE=$BUILD_TYPE $FETCH_FLAG $REPEAT_FLAG -G Ninja -Wno-dev
           fi
 
       - name: Build

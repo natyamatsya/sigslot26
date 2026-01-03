@@ -8,6 +8,9 @@
 #include <vector>
 #include <thread>
 #include <chrono>
+#include <semaphore>
+#include "../support/test_repeat.hpp"
+#include "../support/thread_pool_fixture.hpp"
 
 using namespace std::chrono_literals;
 
@@ -521,24 +524,30 @@ TEST_CASE("rx::filter connection can be disconnected", "[rx][connection]") {
 #include <exec/static_thread_pool.hpp>
 
 TEST_CASE("rx::observe_on switches execution context", "[rx][execution]") {
-    exec::static_thread_pool pool{2};
+    auto iteration = GENERATE(GENERATE_REPEAT());
+    (void)iteration;
+
+    auto& pool = sigslot::test::get_test_pool();
     auto sched = pool.get_scheduler();
 
     sigslot::signal<int> sig;
     std::atomic<int> sum{0};
     std::atomic<std::thread::id> handler_thread_id{};
+    std::counting_semaphore<2> done{0};
 
     auto observed = sig | sigslot::rx::observe_on(sched);
     observed.connect([&](int x) {
         handler_thread_id.store(std::this_thread::get_id());
         sum.fetch_add(x);
+        done.release();
     });
 
     sig(10);
     sig(20);
 
-    // Wait for async processing
-    std::this_thread::sleep_for(50ms);
+    // Wait for both handlers (proper handshake)
+    done.acquire();
+    done.acquire();
 
     REQUIRE(sum.load() == 30);
     // Handler should run on pool thread, not main thread
@@ -546,40 +555,56 @@ TEST_CASE("rx::observe_on switches execution context", "[rx][execution]") {
 }
 
 TEST_CASE("rx::observe_on with map", "[rx][execution]") {
-    exec::static_thread_pool pool{2};
+    auto iteration = GENERATE(GENERATE_REPEAT());
+    (void)iteration;
+
+    auto& pool = sigslot::test::get_test_pool();
     auto sched = pool.get_scheduler();
 
     sigslot::signal<int> sig;
     std::atomic<int> result{0};
+    std::binary_semaphore done{0};
 
     // Chain manually to avoid pipe operator conflict with stdexec
     auto mapped = sig | sigslot::rx::map([](int x) { return x * 2; });
     auto observed = sigslot::rx::observe_on(sched)(mapped);
-    observed.connect([&](int x) { result.store(x); });
+    observed.connect([&](int x) {
+        result.store(x);
+        done.release();
+    });
 
     sig(21);
-    std::this_thread::sleep_for(50ms);
+
+    // Wait for handler (proper handshake)
+    done.acquire();
 
     REQUIRE(result.load() == 42);
 }
 
 TEST_CASE("rx::debounce_on uses scheduler", "[rx][execution][debounce]") {
-    exec::static_thread_pool pool{1};
+    auto iteration = GENERATE(GENERATE_REPEAT());
+    (void)iteration;
+
+    auto& pool = sigslot::test::get_test_pool();
     auto sched = pool.get_scheduler();
 
     sigslot::signal<> sig;
     std::atomic<int> count{0};
+    std::binary_semaphore debounce_fired{0};
 
     auto debounced = sig | sigslot::rx::debounce_on(sched, 30ms);
-    debounced.connect([&]() { count.fetch_add(1); });
+    debounced.connect([&]() {
+        count.fetch_add(1);
+        debounce_fired.release();
+    });
 
     // Rapid emissions
     sig();
     sig();
     sig();
 
-    // Wait for debounce
-    std::this_thread::sleep_for(100ms);
+    // Wait for debounce callback (proper handshake, no timing guesses)
+    debounce_fired.acquire();
 
     REQUIRE(count.load() == 1);
 }

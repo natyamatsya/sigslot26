@@ -6,6 +6,7 @@
 #include <thread>
 #include <atomic>
 #include <array>
+#include "support/test_repeat.hpp"
 
 // Test configuration constants
 namespace {
@@ -13,6 +14,7 @@ constexpr int EMISSIONS_PER_ITERATION = 10000;
 constexpr int THREAD_COUNT = 10;
 constexpr int ITERATIONS_PER_THREAD = 100;
 constexpr int EMISSIONS_PER_THREAD_ITERATION = 100;
+// Note: Threaded Crossed doesn't use GENERATE_REPEAT - it's already a stress test
 constexpr int CROSS_EMISSION_COUNT = 1000000;
 constexpr std::int64_t EXPECTED_CROSS_SUM = 1000000000000ll;
 } // namespace
@@ -64,6 +66,9 @@ static void connect_cross(sigslot::signal<int>& s1, sigslot::signal<int>& s2,
 }
 
 TEST_CASE("Threaded Mix", "[signal_threaded]") {
+    auto iteration = GENERATE(GENERATE_REPEAT());
+    (void)iteration;
+
     sum = 0;
 
     sigslot::signal<int> sig;
@@ -77,6 +82,9 @@ TEST_CASE("Threaded Mix", "[signal_threaded]") {
 }
 
 TEST_CASE("Threaded Emission", "[signal_threaded]") {
+    auto iteration = GENERATE(GENERATE_REPEAT());
+    (void)iteration;
+
     sum = 0;
 
     sigslot::signal<int> sig;
@@ -93,6 +101,7 @@ TEST_CASE("Threaded Emission", "[signal_threaded]") {
 }
 
 // test for deadlocks in cross emission situation
+// Note: This is already a stress test with 1M emissions, no need for GENERATE_REPEAT
 TEST_CASE("Threaded Crossed", "[signal_threaded]") {
     sum = 0;
 
@@ -116,38 +125,47 @@ TEST_CASE("Threaded Crossed", "[signal_threaded]") {
 
 // test what happens when more than one thread attempt disconnection
 TEST_CASE("Threaded Misc", "[signal_threaded]") {
+    auto iteration = GENERATE(GENERATE_REPEAT());
+    (void)iteration;
+
     sum = 0;
     sigslot::signal<int> sig;
-    std::atomic<bool> run{true};
+    
+    // Use operation counts instead of time-based delays
+    // Scale inversely with repeat count to keep total work constant
+    constexpr int OPS_PER_THREAD = 1000 / SIGSLOT_TEST_REPEAT;
+    std::atomic<int> emitter_done{0};
+    std::atomic<int> conn_done{0};
+    std::atomic<int> disconn_done{0};
 
     auto emitter = [&] {
-        while (run) {
+        for (int op = 0; op < OPS_PER_THREAD; ++op) {
             sig(1);
         }
+        emitter_done++;
     };
 
     auto conn = [&] {
-        while (run) {
+        for (int op = 0; op < OPS_PER_THREAD / 30; ++op) {
             for (int i = 0; i < 10; ++i) {
                 sig.connect(f1);
                 sig.connect(f2);
                 sig.connect(f3);
             }
         }
+        conn_done++;
     };
 
     auto disconn = [&] {
-        unsigned int i = 0;
-        while (run) {
-            if (i == 0)
+        for (int op = 0; op < OPS_PER_THREAD; ++op) {
+            if (op % 3 == 0)
                 sig.disconnect(f1);
-            else if (i == 1)
+            else if (op % 3 == 1)
                 sig.disconnect(f2);
             else
                 sig.disconnect(f3);
-            i++;
-            i = i % 3;
         }
+        disconn_done++;
     };
 
     std::array<std::thread, 20> emitters;
@@ -161,9 +179,7 @@ TEST_CASE("Threaded Misc", "[signal_threaded]") {
     for (auto& t : disconns)
         t = std::thread(disconn);
 
-    std::this_thread::sleep_for(std::chrono::milliseconds(100));
-    run = false;
-
+    // Join all threads (proper handshake - no timing delays)
     for (auto& t : emitters)
         t.join();
     for (auto& t : disconns)

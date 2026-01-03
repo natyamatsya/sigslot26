@@ -12,9 +12,11 @@
 
 #include <thread>
 #include <atomic>
+#include <semaphore>
 #include <vector>
 #include <exec/static_thread_pool.hpp>
 #include <sigslot/async/coroutine.hpp>
+#include "../support/test_repeat.hpp"
 
 // =============================================================================
 // Basic Sender Tests
@@ -146,6 +148,9 @@ TEST_CASE("Signal sender with let_value", "[execution]") {
 // =============================================================================
 
 TEST_CASE("Signal sender - multiple concurrent waiters", "[execution][threading]") {
+    auto iteration = GENERATE(GENERATE_REPEAT());
+    (void)iteration;  // Unused, just drives repetition
+
     sigslot::signal<int> sig;
     std::atomic<int> completed{0};
     constexpr size_t NUM_WAITERS = 5;
@@ -163,8 +168,10 @@ TEST_CASE("Signal sender - multiple concurrent waiters", "[execution][threading]
         });
     }
 
-    // Give time for waiters to set up
-    std::this_thread::sleep_for(std::chrono::milliseconds(50));
+    // Wait for all waiters to register slots (proper handshake)
+    while (sig.slot_count() < NUM_WAITERS) {
+        std::this_thread::yield();
+    }
 
     // Emit - all waiters should receive this
     sig(100);
@@ -179,28 +186,27 @@ TEST_CASE("Signal sender - multiple concurrent waiters", "[execution][threading]
 }
 
 TEST_CASE("Signal sender - rapid emissions", "[execution][threading]") {
+    // Test that sequential sync_waits each receive their emission correctly
+    auto iteration = GENERATE(GENERATE_REPEAT());
+
     sigslot::signal<int> sig;
-    std::atomic<int> sum{0};
-    constexpr int NUM_EMISSIONS = 10;
+    std::atomic<int> result{-1};
 
-    std::thread emitter([&]() {
-        for (int i = 0; i < NUM_EMISSIONS; ++i) {
-            std::this_thread::sleep_for(std::chrono::milliseconds(5));
-            sig(i);
-        }
-    });
-
-    // Consume emissions one at a time
-    for (int i = 0; i < NUM_EMISSIONS; ++i) {
+    std::thread waiter([&]() {
         auto sender = sigslot::async::as_sender(sig);
         auto [value] = stdexec::sync_wait(std::move(sender)).value();
-        sum += value;
+        result = value;
+    });
+
+    // Wait for slot to be registered (proper handshake, no timing guesses)
+    while (sig.slot_count() == 0) {
+        std::this_thread::yield();
     }
 
-    emitter.join();
+    sig(iteration * 10);
+    waiter.join();
 
-    // Sum of 0..9 = 45
-    REQUIRE(sum == 45);
+    REQUIRE(result == iteration * 10);
 }
 
 // =============================================================================

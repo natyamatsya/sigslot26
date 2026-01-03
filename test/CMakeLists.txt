@@ -12,6 +12,13 @@ endif()
 include(CTest)
 include(Catch)
 
+# Option to repeat async tests (useful for catching flaky race conditions in CI)
+# This defines a compile-time constant used by the test framework
+set(SIGSLOT_ASYNC_TEST_REPEAT 1 CACHE STRING "Number of times to repeat async tests (default: 1)")
+
+# Option to configure shared thread pool size for execution tests
+set(SIGSLOT_TEST_POOL_SIZE 4 CACHE STRING "Thread pool size for execution tests (default: 4)")
+
 macro(pal_create_test target ut)
     add_executable(${target} "${ut}")
     if(SIGSLOT_RUN_TESTS)
@@ -21,10 +28,14 @@ macro(pal_create_test target ut)
     target_link_libraries(${target} PRIVATE Pal::Sigslot Catch2::Catch2WithMain)
     target_compile_definitions(${target} PRIVATE $<$<CXX_COMPILER_ID:MSVC>:_SCL_SECURE_NO_WARNINGS>)
     
-    # Discover Catch2 tests with timeout for async tests
-    # TSan on macOS significantly slows down execution
-    if(target MATCHES "async")
-        catch_discover_tests(${target} PROPERTIES TIMEOUT 120)
+    # Discover Catch2 tests with timeout and repetition for threading tests
+    # TSan on macOS significantly slows down execution (up to 10x slower)
+    if(target MATCHES "async|threaded")
+        # Pass repeat count and pool size as compile definitions
+        target_compile_definitions(${target} PRIVATE 
+            SIGSLOT_TEST_REPEAT=${SIGSLOT_ASYNC_TEST_REPEAT}
+            SIGSLOT_TEST_POOL_SIZE=${SIGSLOT_TEST_POOL_SIZE})
+        catch_discover_tests(${target} PROPERTIES TIMEOUT 60)
     else()
         catch_discover_tests(${target})
     endif()

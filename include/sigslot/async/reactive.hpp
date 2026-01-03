@@ -491,8 +491,6 @@ private:
     void ensure_connected() const {
         if (!conn_) {
             auto& connectable = get_connectable(*source_);
-            using value_type = std::tuple<>;  // Will be deduced from actual args
-            
             conn_.emplace(connectable.connect([this](auto&&... args) {
                 std::lock_guard lock(mtx_);
                 auto current = std::make_tuple(args...);
@@ -1502,6 +1500,9 @@ public:
         , scheduler_(std::move(sched)) {}
 
     ~observed_signal() {
+        // Disconnect first to prevent new work from being spawned
+        conn_.reset();
+        // Then wait for any in-flight work to complete
         stdexec::sync_wait(scope_.on_empty());
     }
 
@@ -1536,10 +1537,10 @@ private:
                 // Capture args by value for async execution
                 auto captured = std::make_tuple(args...);
                 auto work = stdexec::schedule(scheduler_) 
-                    | stdexec::then([this, captured = std::move(captured)]() mutable {
+                    | stdexec::then([this, c = std::move(captured)]() mutable {
                         std::apply([this](auto&&... a) {
                             output_(std::forward<decltype(a)>(a)...);
-                        }, std::move(captured));
+                        }, std::move(c));
                     });
                 scope_.spawn(std::move(work));
             }));
@@ -1590,6 +1591,9 @@ public:
         , state_(std::make_shared<state>()) {}
 
     ~scheduler_debounced_signal() {
+        // Disconnect first to prevent new work from being spawned
+        conn_.reset();
+        // Then wait for any in-flight work to complete
         stdexec::sync_wait(scope_.on_empty());
     }
 
@@ -1641,7 +1645,7 @@ private:
                             // Simple polling approach - sleep then check
                             std::this_thread::sleep_for(d);
                             
-                            std::lock_guard lock(s->mtx);
+                            std::lock_guard lk(s->mtx);
                             auto elapsed = clock_type::now() - s->last_emission;
                             if (elapsed >= d) {
                                 s->pending = false;
