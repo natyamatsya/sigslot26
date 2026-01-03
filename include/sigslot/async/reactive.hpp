@@ -22,6 +22,7 @@
 #include <memory>
 #include <mutex>
 #include <optional>
+#include <queue>
 #include <thread>
 #include <type_traits>
 
@@ -361,6 +362,867 @@ struct debounce_op {
     }
 };
 
+/**
+ * @brief A signal wrapper that throttles emissions
+ *
+ * Emits the first value, then ignores subsequent values for the specified duration.
+ */
+template <typename Source>
+class throttled_signal {
+public:
+    using source_type = Source;
+    using clock_type = std::chrono::steady_clock;
+    using duration_type = std::chrono::milliseconds;
+    using output_signal_type = typename detail::signal_traits<Source>::signal_type;
+
+private:
+    Source* source_;
+    duration_type interval_;
+    mutable output_signal_type output_;
+    mutable std::optional<scoped_connection> conn_;
+    mutable std::mutex mtx_;
+    mutable clock_type::time_point last_emission_{};
+
+    template <typename S>
+    static auto& get_connectable(S& s) {
+        if constexpr (requires { s.output(); }) {
+            return s.output();
+        } else {
+            return s;
+        }
+    }
+
+public:
+    throttled_signal(Source& source, duration_type interval)
+        : source_(&source)
+        , interval_(interval) {}
+
+    throttled_signal(throttled_signal&& other) noexcept
+        : source_(other.source_)
+        , interval_(other.interval_)
+        , output_(std::move(other.output_)) {
+        other.conn_.reset();
+        ensure_connected();
+    }
+
+    throttled_signal& operator=(throttled_signal&&) = delete;
+    throttled_signal(const throttled_signal&) = delete;
+    throttled_signal& operator=(const throttled_signal&) = delete;
+
+    template <typename... SlotArgs>
+    connection connect(SlotArgs&&... args) {
+        ensure_connected();
+        return output_.connect(std::forward<SlotArgs>(args)...);
+    }
+
+    auto& output() {
+        ensure_connected();
+        return output_;
+    }
+
+private:
+    void ensure_connected() const {
+        if (!conn_) {
+            auto& connectable = get_connectable(*source_);
+            conn_.emplace(connectable.connect([this](auto&&... args) {
+                std::lock_guard lock(mtx_);
+                auto now = clock_type::now();
+                if (now - last_emission_ >= interval_) {
+                    last_emission_ = now;
+                    output_(std::forward<decltype(args)>(args)...);
+                }
+            }));
+        }
+    }
+};
+
+/**
+ * @brief A signal wrapper that only emits when value changes
+ */
+template <typename Source>
+class distinct_signal {
+public:
+    using source_type = Source;
+    using output_signal_type = typename detail::signal_traits<Source>::signal_type;
+
+private:
+    Source* source_;
+    mutable output_signal_type output_;
+    mutable std::optional<scoped_connection> conn_;
+    mutable std::mutex mtx_;
+    mutable std::optional<std::tuple<>> last_value_; // Placeholder
+
+    template <typename S>
+    static auto& get_connectable(S& s) {
+        if constexpr (requires { s.output(); }) {
+            return s.output();
+        } else {
+            return s;
+        }
+    }
+
+public:
+    explicit distinct_signal(Source& source)
+        : source_(&source) {}
+
+    distinct_signal(distinct_signal&& other) noexcept
+        : source_(other.source_)
+        , output_(std::move(other.output_)) {
+        other.conn_.reset();
+        ensure_connected();
+    }
+
+    distinct_signal& operator=(distinct_signal&&) = delete;
+    distinct_signal(const distinct_signal&) = delete;
+    distinct_signal& operator=(const distinct_signal&) = delete;
+
+    template <typename... SlotArgs>
+    connection connect(SlotArgs&&... args) {
+        ensure_connected();
+        return output_.connect(std::forward<SlotArgs>(args)...);
+    }
+
+    auto& output() {
+        ensure_connected();
+        return output_;
+    }
+
+private:
+    void ensure_connected() const {
+        if (!conn_) {
+            auto& connectable = get_connectable(*source_);
+            using value_type = std::tuple<>;  // Will be deduced from actual args
+            
+            conn_.emplace(connectable.connect([this](auto&&... args) {
+                std::lock_guard lock(mtx_);
+                auto current = std::make_tuple(args...);
+                using tuple_type = decltype(current);
+                
+                auto* last = reinterpret_cast<std::optional<tuple_type>*>(&last_value_);
+                if (!last->has_value() || *last != current) {
+                    *last = current;
+                    output_(std::forward<decltype(args)>(args)...);
+                }
+            }));
+        }
+    }
+};
+
+/**
+ * @brief A signal wrapper that only emits when predicate says values differ
+ */
+template <typename Source, typename Pred>
+class distinct_until_changed_signal {
+public:
+    using source_type = Source;
+    using predicate_type = Pred;
+    using output_signal_type = typename detail::signal_traits<Source>::signal_type;
+
+private:
+    Source* source_;
+    Pred predicate_;
+    mutable output_signal_type output_;
+    mutable std::optional<scoped_connection> conn_;
+    mutable std::mutex mtx_;
+    mutable std::optional<std::tuple<>> last_value_;
+
+    template <typename S>
+    static auto& get_connectable(S& s) {
+        if constexpr (requires { s.output(); }) {
+            return s.output();
+        } else {
+            return s;
+        }
+    }
+
+public:
+    distinct_until_changed_signal(Source& source, Pred predicate)
+        : source_(&source)
+        , predicate_(std::move(predicate)) {}
+
+    distinct_until_changed_signal(distinct_until_changed_signal&& other) noexcept
+        : source_(other.source_)
+        , predicate_(std::move(other.predicate_))
+        , output_(std::move(other.output_)) {
+        other.conn_.reset();
+        ensure_connected();
+    }
+
+    distinct_until_changed_signal& operator=(distinct_until_changed_signal&&) = delete;
+    distinct_until_changed_signal(const distinct_until_changed_signal&) = delete;
+    distinct_until_changed_signal& operator=(const distinct_until_changed_signal&) = delete;
+
+    template <typename... SlotArgs>
+    connection connect(SlotArgs&&... args) {
+        ensure_connected();
+        return output_.connect(std::forward<SlotArgs>(args)...);
+    }
+
+    auto& output() {
+        ensure_connected();
+        return output_;
+    }
+
+private:
+    void ensure_connected() const {
+        if (!conn_) {
+            auto& connectable = get_connectable(*source_);
+            
+            conn_.emplace(connectable.connect([this](auto&&... args) {
+                std::lock_guard lock(mtx_);
+                auto current = std::make_tuple(args...);
+                using tuple_type = decltype(current);
+                
+                auto* last = reinterpret_cast<std::optional<tuple_type>*>(&last_value_);
+                if (!last->has_value() || !std::apply([this, &current](auto&&... prev) {
+                    return std::apply([this, &prev...](auto&&... curr) {
+                        return predicate_(prev..., curr...);
+                    }, current);
+                }, *last)) {
+                    *last = current;
+                    output_(std::forward<decltype(args)>(args)...);
+                }
+            }));
+        }
+    }
+};
+
+/**
+ * @brief Factory for throttle operator
+ */
+struct throttle_op {
+    std::chrono::milliseconds interval;
+
+    template <typename Source>
+    auto operator()(Source& source) const {
+        return throttled_signal<Source>(source, interval);
+    }
+};
+
+/**
+ * @brief Factory for distinct operator
+ */
+struct distinct_op {
+    template <typename Source>
+    auto operator()(Source& source) const {
+        return distinct_signal<Source>(source);
+    }
+};
+
+/**
+ * @brief Factory for distinct_until_changed operator
+ */
+template <typename Pred>
+struct distinct_until_changed_op {
+    Pred predicate;
+
+    template <typename Source>
+    auto operator()(Source& source) const {
+        return distinct_until_changed_signal<Source, Pred>(source, predicate);
+    }
+};
+
+// =============================================================================
+// Phase 2: Scan, Buffer, Take, Skip
+// =============================================================================
+
+/**
+ * @brief A signal wrapper that computes a running accumulation
+ */
+template <typename Source, typename T, typename F>
+class scanned_signal {
+public:
+    using source_type = Source;
+    using accumulator_type = T;
+    using function_type = F;
+
+private:
+    Source* source_;
+    T init_;
+    F func_;
+    mutable signal<T> output_;
+    mutable std::optional<scoped_connection> conn_;
+    mutable std::mutex mtx_;
+    mutable T acc_;
+
+    template <typename S>
+    static auto& get_connectable(S& s) {
+        if constexpr (requires { s.output(); }) {
+            return s.output();
+        } else {
+            return s;
+        }
+    }
+
+public:
+    scanned_signal(Source& source, T init, F func)
+        : source_(&source)
+        , init_(std::move(init))
+        , func_(std::move(func))
+        , acc_(init_) {}
+
+    scanned_signal(scanned_signal&& other) noexcept
+        : source_(other.source_)
+        , init_(std::move(other.init_))
+        , func_(std::move(other.func_))
+        , acc_(std::move(other.acc_))
+        , output_(std::move(other.output_)) {
+        other.conn_.reset();
+        ensure_connected();
+    }
+
+    scanned_signal& operator=(scanned_signal&&) = delete;
+    scanned_signal(const scanned_signal&) = delete;
+    scanned_signal& operator=(const scanned_signal&) = delete;
+
+    template <typename... SlotArgs>
+    connection connect(SlotArgs&&... args) {
+        ensure_connected();
+        return output_.connect(std::forward<SlotArgs>(args)...);
+    }
+
+    auto& output() {
+        ensure_connected();
+        return output_;
+    }
+
+private:
+    void ensure_connected() const {
+        if (!conn_) {
+            auto& connectable = get_connectable(*source_);
+            conn_.emplace(connectable.connect([this](auto&&... args) {
+                std::lock_guard lock(mtx_);
+                acc_ = func_(acc_, std::forward<decltype(args)>(args)...);
+                output_(acc_);
+            }));
+        }
+    }
+};
+
+/**
+ * @brief A signal wrapper that buffers N emissions then emits as vector
+ */
+template <typename Source, typename T>
+class buffered_signal {
+public:
+    using source_type = Source;
+    using value_type = T;
+
+private:
+    Source* source_;
+    std::size_t count_;
+    mutable signal<std::vector<T>> output_;
+    mutable std::optional<scoped_connection> conn_;
+    mutable std::mutex mtx_;
+    mutable std::vector<T> buffer_;
+
+    template <typename S>
+    static auto& get_connectable(S& s) {
+        if constexpr (requires { s.output(); }) {
+            return s.output();
+        } else {
+            return s;
+        }
+    }
+
+public:
+    buffered_signal(Source& source, std::size_t count)
+        : source_(&source)
+        , count_(count) {
+        buffer_.reserve(count);
+    }
+
+    buffered_signal(buffered_signal&& other) noexcept
+        : source_(other.source_)
+        , count_(other.count_)
+        , buffer_(std::move(other.buffer_))
+        , output_(std::move(other.output_)) {
+        other.conn_.reset();
+        ensure_connected();
+    }
+
+    buffered_signal& operator=(buffered_signal&&) = delete;
+    buffered_signal(const buffered_signal&) = delete;
+    buffered_signal& operator=(const buffered_signal&) = delete;
+
+    template <typename... SlotArgs>
+    connection connect(SlotArgs&&... args) {
+        ensure_connected();
+        return output_.connect(std::forward<SlotArgs>(args)...);
+    }
+
+    auto& output() {
+        ensure_connected();
+        return output_;
+    }
+
+private:
+    void ensure_connected() const {
+        if (!conn_) {
+            auto& connectable = get_connectable(*source_);
+            conn_.emplace(connectable.connect([this](auto&& arg) {
+                std::lock_guard lock(mtx_);
+                buffer_.push_back(std::forward<decltype(arg)>(arg));
+                if (buffer_.size() >= count_) {
+                    output_(std::move(buffer_));
+                    buffer_.clear();
+                    buffer_.reserve(count_);
+                }
+            }));
+        }
+    }
+};
+
+/**
+ * @brief A signal wrapper that only forwards first N emissions
+ */
+template <typename Source>
+class take_signal {
+public:
+    using source_type = Source;
+    using output_signal_type = typename detail::signal_traits<Source>::signal_type;
+
+private:
+    Source* source_;
+    std::size_t count_;
+    mutable output_signal_type output_;
+    mutable std::optional<scoped_connection> conn_;
+    mutable std::mutex mtx_;
+    mutable std::size_t remaining_;
+
+    template <typename S>
+    static auto& get_connectable(S& s) {
+        if constexpr (requires { s.output(); }) {
+            return s.output();
+        } else {
+            return s;
+        }
+    }
+
+public:
+    take_signal(Source& source, std::size_t count)
+        : source_(&source)
+        , count_(count)
+        , remaining_(count) {}
+
+    take_signal(take_signal&& other) noexcept
+        : source_(other.source_)
+        , count_(other.count_)
+        , remaining_(other.remaining_)
+        , output_(std::move(other.output_)) {
+        other.conn_.reset();
+        ensure_connected();
+    }
+
+    take_signal& operator=(take_signal&&) = delete;
+    take_signal(const take_signal&) = delete;
+    take_signal& operator=(const take_signal&) = delete;
+
+    template <typename... SlotArgs>
+    connection connect(SlotArgs&&... args) {
+        ensure_connected();
+        return output_.connect(std::forward<SlotArgs>(args)...);
+    }
+
+    auto& output() {
+        ensure_connected();
+        return output_;
+    }
+
+private:
+    void ensure_connected() const {
+        if (!conn_) {
+            auto& connectable = get_connectable(*source_);
+            conn_.emplace(connectable.connect([this](auto&&... args) {
+                std::lock_guard lock(mtx_);
+                if (remaining_ > 0) {
+                    --remaining_;
+                    output_(std::forward<decltype(args)>(args)...);
+                    if (remaining_ == 0) {
+                        conn_->disconnect();
+                    }
+                }
+            }));
+        }
+    }
+};
+
+/**
+ * @brief A signal wrapper that skips first N emissions
+ */
+template <typename Source>
+class skip_signal {
+public:
+    using source_type = Source;
+    using output_signal_type = typename detail::signal_traits<Source>::signal_type;
+
+private:
+    Source* source_;
+    std::size_t count_;
+    mutable output_signal_type output_;
+    mutable std::optional<scoped_connection> conn_;
+    mutable std::mutex mtx_;
+    mutable std::size_t remaining_;
+
+    template <typename S>
+    static auto& get_connectable(S& s) {
+        if constexpr (requires { s.output(); }) {
+            return s.output();
+        } else {
+            return s;
+        }
+    }
+
+public:
+    skip_signal(Source& source, std::size_t count)
+        : source_(&source)
+        , count_(count)
+        , remaining_(count) {}
+
+    skip_signal(skip_signal&& other) noexcept
+        : source_(other.source_)
+        , count_(other.count_)
+        , remaining_(other.remaining_)
+        , output_(std::move(other.output_)) {
+        other.conn_.reset();
+        ensure_connected();
+    }
+
+    skip_signal& operator=(skip_signal&&) = delete;
+    skip_signal(const skip_signal&) = delete;
+    skip_signal& operator=(const skip_signal&) = delete;
+
+    template <typename... SlotArgs>
+    connection connect(SlotArgs&&... args) {
+        ensure_connected();
+        return output_.connect(std::forward<SlotArgs>(args)...);
+    }
+
+    auto& output() {
+        ensure_connected();
+        return output_;
+    }
+
+private:
+    void ensure_connected() const {
+        if (!conn_) {
+            auto& connectable = get_connectable(*source_);
+            conn_.emplace(connectable.connect([this](auto&&... args) {
+                std::lock_guard lock(mtx_);
+                if (remaining_ > 0) {
+                    --remaining_;
+                } else {
+                    output_(std::forward<decltype(args)>(args)...);
+                }
+            }));
+        }
+    }
+};
+
+/**
+ * @brief A signal wrapper that forwards while predicate is true
+ */
+template <typename Source, typename Pred>
+class take_while_signal {
+public:
+    using source_type = Source;
+    using predicate_type = Pred;
+    using output_signal_type = typename detail::signal_traits<Source>::signal_type;
+
+private:
+    Source* source_;
+    Pred predicate_;
+    mutable output_signal_type output_;
+    mutable std::optional<scoped_connection> conn_;
+    mutable std::mutex mtx_;
+    mutable bool stopped_ = false;
+
+    template <typename S>
+    static auto& get_connectable(S& s) {
+        if constexpr (requires { s.output(); }) {
+            return s.output();
+        } else {
+            return s;
+        }
+    }
+
+public:
+    take_while_signal(Source& source, Pred predicate)
+        : source_(&source)
+        , predicate_(std::move(predicate)) {}
+
+    take_while_signal(take_while_signal&& other) noexcept
+        : source_(other.source_)
+        , predicate_(std::move(other.predicate_))
+        , stopped_(other.stopped_)
+        , output_(std::move(other.output_)) {
+        other.conn_.reset();
+        ensure_connected();
+    }
+
+    take_while_signal& operator=(take_while_signal&&) = delete;
+    take_while_signal(const take_while_signal&) = delete;
+    take_while_signal& operator=(const take_while_signal&) = delete;
+
+    template <typename... SlotArgs>
+    connection connect(SlotArgs&&... args) {
+        ensure_connected();
+        return output_.connect(std::forward<SlotArgs>(args)...);
+    }
+
+    auto& output() {
+        ensure_connected();
+        return output_;
+    }
+
+private:
+    void ensure_connected() const {
+        if (!conn_) {
+            auto& connectable = get_connectable(*source_);
+            conn_.emplace(connectable.connect([this](auto&&... args) {
+                std::lock_guard lock(mtx_);
+                if (!stopped_ && predicate_(args...)) {
+                    output_(std::forward<decltype(args)>(args)...);
+                } else {
+                    stopped_ = true;
+                    conn_->disconnect();
+                }
+            }));
+        }
+    }
+};
+
+// Operator factories for Phase 2
+
+template <typename T, typename F>
+struct scan_op {
+    T init;
+    F func;
+
+    template <typename Source>
+    auto operator()(Source& source) const {
+        return scanned_signal<Source, T, F>(source, init, func);
+    }
+};
+
+template <typename T>
+struct buffer_op {
+    std::size_t count;
+
+    template <typename Source>
+    auto operator()(Source& source) const {
+        return buffered_signal<Source, T>(source, count);
+    }
+};
+
+struct take_op {
+    std::size_t count;
+
+    template <typename Source>
+    auto operator()(Source& source) const {
+        return take_signal<Source>(source, count);
+    }
+};
+
+struct skip_op {
+    std::size_t count;
+
+    template <typename Source>
+    auto operator()(Source& source) const {
+        return skip_signal<Source>(source, count);
+    }
+};
+
+template <typename Pred>
+struct take_while_op {
+    Pred predicate;
+
+    template <typename Source>
+    auto operator()(Source& source) const {
+        return take_while_signal<Source, Pred>(source, predicate);
+    }
+};
+
+// =============================================================================
+// Phase 4: Multi-signal operators (merge, combine_latest, zip)
+// =============================================================================
+
+// Note: merged_signal for heterogeneous signals removed - use merged_typed_signal instead
+
+/**
+ * @brief A signal that merges emissions from signals with same arg type
+ */
+template <typename T>
+class merged_typed_signal {
+public:
+    using value_type = T;
+
+private:
+    std::vector<signal<T>*> sources_;
+    mutable signal<T> output_;
+    mutable std::vector<scoped_connection> conns_;
+
+public:
+    template <typename... Sources>
+    explicit merged_typed_signal(Sources&... sources)
+        : sources_{&sources...} {}
+
+    merged_typed_signal(merged_typed_signal&&) = default;
+    merged_typed_signal& operator=(merged_typed_signal&&) = delete;
+    merged_typed_signal(const merged_typed_signal&) = delete;
+    merged_typed_signal& operator=(const merged_typed_signal&) = delete;
+
+    template <typename... SlotArgs>
+    connection connect(SlotArgs&&... args) {
+        ensure_connected();
+        return output_.connect(std::forward<SlotArgs>(args)...);
+    }
+
+    auto& output() {
+        ensure_connected();
+        return output_;
+    }
+
+private:
+    void ensure_connected() const {
+        if (conns_.empty()) {
+            for (auto* src : sources_) {
+                conns_.emplace_back(src->connect([this](T value) {
+                    output_(std::move(value));
+                }));
+            }
+        }
+    }
+};
+
+/**
+ * @brief A signal that combines latest values from two signals
+ */
+template <typename Sig1, typename Sig2, typename T1, typename T2>
+class combined_signal {
+public:
+    using output_type = std::tuple<T1, T2>;
+
+private:
+    Sig1* sig1_;
+    Sig2* sig2_;
+    mutable signal<T1, T2> output_;
+    mutable std::optional<scoped_connection> conn1_;
+    mutable std::optional<scoped_connection> conn2_;
+    mutable std::mutex mtx_;
+    mutable std::optional<T1> last1_;
+    mutable std::optional<T2> last2_;
+
+public:
+    combined_signal(Sig1& sig1, Sig2& sig2)
+        : sig1_(&sig1)
+        , sig2_(&sig2) {}
+
+    combined_signal(combined_signal&&) = default;
+    combined_signal& operator=(combined_signal&&) = delete;
+    combined_signal(const combined_signal&) = delete;
+    combined_signal& operator=(const combined_signal&) = delete;
+
+    template <typename... SlotArgs>
+    connection connect(SlotArgs&&... args) {
+        ensure_connected();
+        return output_.connect(std::forward<SlotArgs>(args)...);
+    }
+
+    auto& output() {
+        ensure_connected();
+        return output_;
+    }
+
+private:
+    void ensure_connected() const {
+        if (!conn1_) {
+            conn1_.emplace(sig1_->connect([this](T1 v) {
+                std::lock_guard lock(mtx_);
+                last1_ = std::move(v);
+                if (last2_) {
+                    output_(*last1_, *last2_);
+                }
+            }));
+        }
+        if (!conn2_) {
+            conn2_.emplace(sig2_->connect([this](T2 v) {
+                std::lock_guard lock(mtx_);
+                last2_ = std::move(v);
+                if (last1_) {
+                    output_(*last1_, *last2_);
+                }
+            }));
+        }
+    }
+};
+
+/**
+ * @brief A signal that zips emissions from two signals 1:1
+ */
+template <typename Sig1, typename Sig2, typename T1, typename T2>
+class zipped_signal {
+public:
+    using output_type = std::tuple<T1, T2>;
+
+private:
+    Sig1* sig1_;
+    Sig2* sig2_;
+    mutable signal<T1, T2> output_;
+    mutable std::optional<scoped_connection> conn1_;
+    mutable std::optional<scoped_connection> conn2_;
+    mutable std::mutex mtx_;
+    mutable std::queue<T1> queue1_;
+    mutable std::queue<T2> queue2_;
+
+public:
+    zipped_signal(Sig1& sig1, Sig2& sig2)
+        : sig1_(&sig1)
+        , sig2_(&sig2) {}
+
+    zipped_signal(zipped_signal&&) = default;
+    zipped_signal& operator=(zipped_signal&&) = delete;
+    zipped_signal(const zipped_signal&) = delete;
+    zipped_signal& operator=(const zipped_signal&) = delete;
+
+    template <typename... SlotArgs>
+    connection connect(SlotArgs&&... args) {
+        ensure_connected();
+        return output_.connect(std::forward<SlotArgs>(args)...);
+    }
+
+    auto& output() {
+        ensure_connected();
+        return output_;
+    }
+
+private:
+    void ensure_connected() const {
+        if (!conn1_) {
+            conn1_.emplace(sig1_->connect([this](T1 v) {
+                std::lock_guard lock(mtx_);
+                if (!queue2_.empty()) {
+                    output_(std::move(v), std::move(queue2_.front()));
+                    queue2_.pop();
+                } else {
+                    queue1_.push(std::move(v));
+                }
+            }));
+        }
+        if (!conn2_) {
+            conn2_.emplace(sig2_->connect([this](T2 v) {
+                std::lock_guard lock(mtx_);
+                if (!queue1_.empty()) {
+                    output_(std::move(queue1_.front()), std::move(v));
+                    queue1_.pop();
+                } else {
+                    queue2_.push(std::move(v));
+                }
+            }));
+        }
+    }
+};
+
 // =============================================================================
 // Public API
 // =============================================================================
@@ -406,6 +1268,170 @@ auto filter(Pred&& predicate) {
  */
 inline auto debounce(std::chrono::milliseconds delay) {
     return debounce_op{delay};
+}
+
+/**
+ * @brief Throttle signal emissions
+ *
+ * Emits the first value, then ignores subsequent values for the duration.
+ *
+ * @param interval Duration to ignore values after each emission
+ * @return An operator that can be applied to a signal
+ *
+ * Example:
+ *   auto throttled = sig | rx::throttle(100ms);
+ */
+inline auto throttle(std::chrono::milliseconds interval) {
+    return throttle_op{interval};
+}
+
+/**
+ * @brief Only emit when value changes
+ *
+ * Filters out consecutive duplicate values using operator==.
+ *
+ * @return An operator that can be applied to a signal
+ *
+ * Example:
+ *   auto distinct = sig | rx::distinct();
+ */
+inline auto distinct() {
+    return distinct_op{};
+}
+
+/**
+ * @brief Only emit when predicate says values differ
+ *
+ * @param predicate Function that returns true if values are equal
+ * @return An operator that can be applied to a signal
+ *
+ * Example:
+ *   auto by_id = sig | rx::distinct_until_changed([](auto& a, auto& b) { 
+ *       return a.id == b.id; 
+ *   });
+ */
+template <typename Pred>
+auto distinct_until_changed(Pred&& predicate) {
+    return distinct_until_changed_op<std::decay_t<Pred>>{std::forward<Pred>(predicate)};
+}
+
+/**
+ * @brief Running accumulator - emits accumulated value after each input
+ *
+ * @param init Initial accumulator value
+ * @param func Accumulator function (acc, value) -> new_acc
+ * @return An operator that can be applied to a signal
+ *
+ * Example:
+ *   auto running_sum = sig | rx::scan(0, [](int acc, int x) { return acc + x; });
+ */
+template <typename T, typename F>
+auto scan(T&& init, F&& func) {
+    return scan_op<std::decay_t<T>, std::decay_t<F>>{
+        std::forward<T>(init), std::forward<F>(func)};
+}
+
+/**
+ * @brief Buffer N emissions then emit as vector
+ *
+ * @tparam T Value type to buffer
+ * @param count Number of emissions to buffer
+ * @return An operator that can be applied to a signal
+ *
+ * Example:
+ *   auto batched = sig | rx::buffer<int>(3);
+ */
+template <typename T>
+auto buffer(std::size_t count) {
+    return buffer_op<T>{count};
+}
+
+/**
+ * @brief Only forward first N emissions
+ *
+ * @param count Number of emissions to forward
+ * @return An operator that can be applied to a signal
+ *
+ * Example:
+ *   auto first_five = sig | rx::take(5);
+ */
+inline auto take(std::size_t count) {
+    return take_op{count};
+}
+
+/**
+ * @brief Skip first N emissions, forward the rest
+ *
+ * @param count Number of emissions to skip
+ * @return An operator that can be applied to a signal
+ *
+ * Example:
+ *   auto after_warmup = sig | rx::skip(3);
+ */
+inline auto skip(std::size_t count) {
+    return skip_op{count};
+}
+
+/**
+ * @brief Forward while predicate is true, stop on first false
+ *
+ * @param predicate Function that returns true to continue forwarding
+ * @return An operator that can be applied to a signal
+ *
+ * Example:
+ *   auto while_positive = sig | rx::take_while([](int x) { return x > 0; });
+ */
+template <typename Pred>
+auto take_while(Pred&& predicate) {
+    return take_while_op<std::decay_t<Pred>>{std::forward<Pred>(predicate)};
+}
+
+/**
+ * @brief Merge multiple signals with the same argument type
+ *
+ * @param sources Signals to merge
+ * @return A merged signal that emits from any source
+ *
+ * Example:
+ *   auto merged = rx::merge(sig1, sig2, sig3);
+ */
+template <typename T, typename... Sources>
+auto merge(Sources&... sources) {
+    return merged_typed_signal<T>(sources...);
+}
+
+/**
+ * @brief Combine latest values from two signals
+ *
+ * Emits a pair when either signal fires (after both have fired once).
+ *
+ * @param sig1 First signal
+ * @param sig2 Second signal
+ * @return A combined signal emitting (T1, T2)
+ *
+ * Example:
+ *   auto combined = rx::combine_latest<int, std::string>(sig1, sig2);
+ */
+template <typename T1, typename T2, typename Sig1, typename Sig2>
+auto combine_latest(Sig1& sig1, Sig2& sig2) {
+    return combined_signal<Sig1, Sig2, T1, T2>(sig1, sig2);
+}
+
+/**
+ * @brief Zip emissions from two signals 1:1
+ *
+ * Pairs emissions in order, waiting for both signals.
+ *
+ * @param sig1 First signal
+ * @param sig2 Second signal
+ * @return A zipped signal emitting (T1, T2)
+ *
+ * Example:
+ *   auto zipped = rx::zip<int, std::string>(sig1, sig2);
+ */
+template <typename T1, typename T2, typename Sig1, typename Sig2>
+auto zip(Sig1& sig1, Sig2& sig2) {
+    return zipped_signal<Sig1, Sig2, T1, T2>(sig1, sig2);
 }
 
 // =============================================================================
