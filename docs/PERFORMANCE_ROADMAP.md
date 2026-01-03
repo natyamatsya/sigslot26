@@ -125,6 +125,41 @@ For reactive pipelines emitting many values in sequence.
 
 ---
 
+## Recommended Strategy
+
+### Approach: Future-Proof API with Optional Backends
+
+1. **Design API compatible with `std::hazard_pointer`** (C++26)
+   - Use the standard interface as the target abstraction
+   - This ensures zero migration effort when C++26 is adopted
+
+2. **Provide optional adapters for pre-C++26**
+   - **Facebook Folly** (recommended for production): Battle-tested at Meta scale
+   - **libcds** (alternative): Full lock-free container suite, BSL-1.0 license
+
+3. **Auto-detect and prefer standard library**
+   - When `__cpp_lib_hazard_pointer` is defined, use `std::hazard_pointer`
+   - Otherwise, fall back to configured optional dependency
+   - If no dependency configured, use current mutex-based implementation
+
+### Implementation Order
+
+```
+Phase 1 (Now)         Phase 2 (C++20)           Phase 3 (C++26/Optional)
+─────────────────     ─────────────────────     ────────────────────────
+• Relaxed ordering    • atomic<shared_ptr>      • Hazard pointer backend
+• Cache alignment     • Lock-free emission      • Lock-free mutation
+• Quick wins          • Major perf gain         • Full lock-free
+```
+
+### Why This Order?
+
+- **Phase 1** requires no API changes and can ship immediately
+- **Phase 2** provides the biggest performance win with minimal risk
+- **Phase 3** is optional - users who need maximum performance can opt-in
+
+---
+
 ## Optional Dependencies Summary
 
 | Dependency | Purpose | Integration |

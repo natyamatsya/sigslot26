@@ -7,12 +7,24 @@
 #include <atomic>
 #include <memory>
 #include <mutex>
+#include <new>
 #include <type_traits>
 #include <utility>
 #include <thread>
 #include <vector>
 #include <optional>
 #include <concepts>
+
+// Cache line size for preventing false sharing between threads.
+// When multiple threads access adjacent memory locations, they may experience
+// "false sharing" - cache invalidation even though they access different variables.
+// Aligning hot atomic variables to cache line boundaries prevents this.
+// See: https://en.cppreference.com/w/cpp/thread/hardware_destructive_interference_size
+#ifdef __cpp_lib_hardware_interference_size
+    inline constexpr std::size_t sigslot_cache_line_size = std::hardware_destructive_interference_size;
+#else
+    inline constexpr std::size_t sigslot_cache_line_size = 64;  // Common default for x86/ARM
+#endif
 
 #if defined __clang__ || (__GNUC__ > 5)
 #define SIGSLOT_MAY_ALIAS __attribute__((__may_alias__))
@@ -454,7 +466,12 @@ public:
 
     virtual ~slot_state() = default;
 
-    [[nodiscard]] virtual bool connected() const noexcept { return m_connected; }
+    // memory_order_relaxed is safe here: we only need eventual consistency for
+    // the connected flag. No synchronization with other memory operations required.
+    // See: https://en.cppreference.com/w/cpp/atomic/memory_order
+    [[nodiscard]] virtual bool connected() const noexcept {
+        return m_connected.load(std::memory_order_relaxed);
+    }
 
     bool disconnect() noexcept {
         bool ret = m_connected.exchange(false);
@@ -464,9 +481,12 @@ public:
         return ret;
     }
 
-    [[nodiscard]] bool blocked() const noexcept { return m_blocked.load(); }
-    void block() noexcept { m_blocked.store(true); }
-    void unblock() noexcept { m_blocked.store(false); }
+    // Blocking is a hint to skip slot invocation; relaxed ordering suffices.
+    [[nodiscard]] bool blocked() const noexcept {
+        return m_blocked.load(std::memory_order_relaxed);
+    }
+    void block() noexcept { m_blocked.store(true, std::memory_order_relaxed); }
+    void unblock() noexcept { m_blocked.store(false, std::memory_order_relaxed); }
 
 protected:
     virtual void do_disconnect() {}
@@ -1098,7 +1118,9 @@ public:
      */
     template<typename Self, typename... U>
     void operator()(this Self&& self, U&&... a) {
-        if (self.m_block) {
+        // Relaxed load is sufficient: blocking is advisory and doesn't require
+        // synchronization with slot list modifications (handled by COW + mutex).
+        if (self.m_block.load(std::memory_order_relaxed)) {
             return;
         }
 
@@ -1375,7 +1397,7 @@ public:
      * @brief Blocks signal emission
      * Safety: thread safe
      */
-    void block() noexcept { m_block.store(true); }
+    void block() noexcept { m_block.store(true, std::memory_order_relaxed); }
 
     /**
      * @brief Blocks all slots in a given group
@@ -1396,7 +1418,7 @@ public:
      * @brief Unblocks signal emission
      * Safety: thread safe
      */
-    void unblock() noexcept { m_block.store(false); }
+    void unblock() noexcept { m_block.store(false, std::memory_order_relaxed); }
 
     /**
      * @brief Unblocks all slots in a given group
@@ -1418,7 +1440,7 @@ public:
      */
     template<typename Self>
     [[nodiscard]] bool blocked(this Self&& self) noexcept {
-        return self.m_block.load();
+        return self.m_block.load(std::memory_order_relaxed);
     }
 
     /**
@@ -1594,7 +1616,11 @@ private:
 private:
     Lockable m_mutex;
     cow_type<list_type> m_slots;
-    std::atomic<bool> m_block;
+    // Align m_block to its own cache line to prevent false sharing.
+    // This ensures that concurrent reads of m_block don't cause cache
+    // invalidations when m_mutex or m_slots are modified by other threads.
+    // See: https://en.cppreference.com/w/cpp/language/alignas
+    alignas(sigslot_cache_line_size) std::atomic<bool> m_block;
 };
 
 /**
