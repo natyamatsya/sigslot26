@@ -1269,6 +1269,9 @@ public:
     using arg_list = trait::typelist<T...>;
     using ext_arg_list = trait::typelist<connection&, T...>;
 
+    /// True if this signal type is thread-safe, false otherwise.
+    static constexpr bool thread_safe = is_thread_safe<Lockable>::value;
+
     signal_base() noexcept : m_block(false) {}
     ~signal_base() override {
         disconnect_all();
