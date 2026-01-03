@@ -3,6 +3,11 @@
 #include <catch2/matchers/catch_matchers_templated.hpp>
 #include <string>
 
+#ifdef _MSC_VER
+#pragma warning(push)
+#pragma warning(disable: 4180)  // qualifier applied to function type has no meaning
+#endif
+
 namespace sigslot::matchers {
 
 // Matcher for signal slot counts
@@ -171,3 +176,7 @@ IsConnectedToPairMatcher<Callable, Obj> IsConnectedTo(const Callable& c, const O
 //   REQUIRE_THAT(sig, IsConnectedTo(callable));
 //   REQUIRE_THAT(sig, IsConnectedTo(&object));
 //   REQUIRE_THAT(sig, IsConnectedTo(&Class::method, &object));
+
+#ifdef _MSC_VER
+#pragma warning(pop)
+#endif

@@ -1,3 +1,8 @@
+// SPDX-License-Identifier: MIT
+// SPDX-FileCopyrightText: palacaze/sigslot contributors
+// SPDX-FileCopyrightText: mousebyte/sigslot20 contributors
+// SPDX-FileCopyrightText: natyamatsya/sigslot26 contributors
+
 #pragma once
 #include <atomic>
 #include <memory>
@@ -1630,14 +1635,17 @@ class signal_interface final {
     }
 
     // NOLINTNEXTLINE(hicpp-noexcept-move,performance-noexcept-move-constructor)
-    signal_interface(signal_interface&& o) /* not noexcept */ {
+    signal_interface(signal_interface&& o) /* not noexcept */
+        : m_sig(nullptr)
+    {
         if (o.m_sig_storage.has_value()) {
-            m_sig_storage = std::move(o.m_sig_storage);
+            m_sig_storage.emplace(std::move(*o.m_sig_storage));
             m_sig = std::addressof(*m_sig_storage);
-            o.m_sig = nullptr;
+            o.m_sig_storage.reset();
         } else {
-            std::swap(m_sig, o.m_sig);
+            m_sig = o.m_sig;
         }
+        o.m_sig = nullptr;
     }
 
     // NOLINTNEXTLINE(hicpp-noexcept-move,performance-noexcept-move-constructor)

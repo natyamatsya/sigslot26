@@ -5,6 +5,9 @@ set(CMAKE_CXX_STANDARD 23)
 set(CMAKE_CXX_EXTENSIONS OFF)
 set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
 
+# Disable C++20 modules scanning - stdexec headers aren't compatible with clang-scan-deps
+set(CMAKE_CXX_SCAN_FOR_MODULES OFF)
+
 project(
     pal_sigslot
     VERSION 1.2.0

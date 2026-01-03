@@ -1,10 +1,13 @@
+// SPDX-License-Identifier: MIT
+// SPDX-FileCopyrightText: palacaze/sigslot contributors
+
 #include <sigslot/signal.hpp>
 #include <print>
 #include <string>
 #include <limits>
 
-static auto printer(std::string pos) {
-    return [pos = std::move(pos)](const std::string& s, int i) {
+static auto printer(std::string position) {
+    return [pos = std::move(position)](const std::string& s, int i) {
         std::println("{} to print {} and {}", pos, s, i);
     };
 }

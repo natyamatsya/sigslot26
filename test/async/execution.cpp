@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: MIT
+// SPDX-FileCopyrightText: natyamatsya/sigslot26 contributors
+
 #include <catch2/catch_test_macros.hpp>
 #include <sigslot/signal.hpp>
 #include <sigslot/async/execution.hpp>

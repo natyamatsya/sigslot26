@@ -1,7 +1,9 @@
 # ThreadSanitizer suppressions for sigslot26 tests
 #
-# These suppress known false positives in Qt and glib internals.
-# Qt's event system uses internal synchronization that TSan doesn't understand.
+# These suppress known false positives in Qt, glib, and sanitizer internals.
+
+# TSan/UBSan runtime internal race (false positive when both sanitizers enabled)
+race:__sanitizer::IsAccessibleMemoryRange
 
 # Qt internal allocator races
 race:libQt6Core.so

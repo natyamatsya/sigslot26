@@ -28,14 +28,13 @@ target_compile_options(Sigslot_CommonWarnings INTERFACE
     $<$<BOOL:${SIGSLOT_COMPILER_CLANG_OR_GCC}>:-fdiagnostics-color=always;-pipe>
     $<$<BOOL:${SIGSLOT_COMPILER_CLANGCL}>:
         -Wno-c++98-compat;-Wno-c++98-compat-pedantic;-Wno-documentation;-Wno-missing-prototypes>
-    $<$<CXX_COMPILER_ID:MSVC>:/W3>
 )
 
 add_library(Sigslot_ManyWarnings INTERFACE)
 target_compile_options(Sigslot_ManyWarnings INTERFACE
     $<$<BOOL:${SIGSLOT_COMPILER_CLANG_OR_CLANGCL_OR_GCC}>:-Wpedantic>
     $<$<BOOL:${SIGSLOT_COMPILER_CLANG_OR_GCC}>:-fdiagnostics-color=always;-pipe>
-    $<$<CXX_COMPILER_ID:MSVC>:/W4>
+    $<$<CXX_COMPILER_ID:MSVC>:/W4;/wd4324;/wd4456;/wd4702;/wd4100>
 )
 
 # RTTI
@@ -48,7 +47,7 @@ target_compile_options(Sigslot_NoRTTI INTERFACE
 # Profiling
 add_library(Sigslot_Profiling INTERFACE)
 target_compile_options(Sigslot_Profiling INTERFACE
-    $<$<BOOL:${SIGSLOT_COMPILER_CLANG_OR_CLANGCL_OR_GCC}>:-g;-fno-omit-frame-pointer>
+    $<$<BOOL:${SIGSLOT_COMPILER_CLANG_OR_GCC}>:-g;-fno-omit-frame-pointer>
 )
 
 # sanitizers

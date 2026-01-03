@@ -5,11 +5,9 @@
 # Qt internal alignment issues
 alignment:libQt6Core.so
 
-# glib type punning
-type-punning:libglib-2.0.so
-
 # Known Qt integer overflow (false positives)
-integer-overflow:libQt6Core.so
+signed-integer-overflow:libQt6Core.so
+unsigned-integer-overflow:libQt6Core.so
 
 # stdexec internal UB (if any)
 undefined:libstdc++.so

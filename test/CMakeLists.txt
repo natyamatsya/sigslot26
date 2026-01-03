@@ -21,8 +21,12 @@ macro(pal_create_test target ut)
     target_link_libraries(${target} PRIVATE Pal::Sigslot Catch2::Catch2WithMain)
     target_compile_definitions(${target} PRIVATE $<$<CXX_COMPILER_ID:MSVC>:_SCL_SECURE_NO_WARNINGS>)
     
-    # Discover Catch2 tests
-    catch_discover_tests(${target})
+    # Discover Catch2 tests with timeout for async tests
+    if(target MATCHES "async-execution")
+        catch_discover_tests(${target} PROPERTIES TIMEOUT 30)
+    else()
+        catch_discover_tests(${target})
+    endif()
 endmacro()
 
 file(

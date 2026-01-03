@@ -18,6 +18,20 @@ Sigslot is unit-tested and should be reliable and stable enough to replace Boost
 
 The tests run cleanly under the address, thread and undefined behaviour sanitizers.
 
+### CI Matrix and Sanitizer Configuration
+
+The library is continuously tested across multiple platforms and compilers:
+
+| Platform | Compiler | Sanitizers | Notes |
+|----------|----------|------------|-------|
+| Windows | MSVC | ASan, UBSan | Address + Undefined Behavior |
+| Windows | clang-cl | TSan, UBSan | Thread + Undefined Behavior |
+| Ubuntu | GCC 14 | TSan, UBSan | Thread + Undefined Behavior |
+| Ubuntu | Clang 18 | TSan | Thread only* |
+| macOS | Apple Clang | TSan | Thread only* |
+
+*\*Note: UBSan is disabled for Clang builds when using stdexec integration. Combining TSan and UBSan with Clang causes hangs in stdexec's `sync_wait` operations. GCC does not exhibit this issue.*
+
 Many implementations allow signal return types, Sigslot does not because I have
 no use for them. If I can be convinced of otherwise I may change my mind later on.
 

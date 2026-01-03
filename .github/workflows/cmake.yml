@@ -94,19 +94,24 @@ jobs:
           touch "${{github.workspace}}/.build_in_progress"
 
       - name: Cache dependencies (Catch2, stdexec)
+        id: cache-deps
         uses: actions/cache@v4
         with:
           path: |
             build/_deps
+            build/CMakeFiles/FetchContent
+            build/.ninja_log
+            build/.ninja_deps
           key: deps-${{ matrix.config.name }}-${{ steps.cmake-key.outputs.cmake-config-hash }}
 
       - name: Clean Build Directory
+        if: steps.cache-deps.outputs.cache-hit != 'true'
         shell: bash
         run: |
           BUILD_DIR="${{github.workspace}}/build"
           mkdir -p "$BUILD_DIR"
           
-          # Delete everything except cached _deps
+          # Delete everything except cached _deps (only on cache miss)
           cd "$BUILD_DIR"
           find . -mindepth 1 -maxdepth 1 -not -name '_deps' -exec rm -rf {} +
 
@@ -119,12 +124,14 @@ jobs:
         shell: cmd
         working-directory: ${{github.workspace}}/build
         run: |
+          set FETCH_FLAG=
+          if "${{ steps.cache-deps.outputs.cache-hit }}"=="true" set FETCH_FLAG=-DFETCHCONTENT_FULLY_DISCONNECTED=ON
           if "%MATRIX_CONFIG_NAME%"=="Windows MSVC" (
             echo Configuring with MSVC and AddressSanitizer
-            cmake %GITHUB_WORKSPACE% -DCMAKE_BUILD_TYPE=%BUILD_TYPE% -DSIGSLOT_SANITIZE_ADDRESS=ON -DSIGSLOT_SANITIZE_UNDEFINED=ON -G Ninja -Wno-dev
+            cmake %GITHUB_WORKSPACE% -DCMAKE_BUILD_TYPE=%BUILD_TYPE% -DSIGSLOT_SANITIZE_ADDRESS=ON -DSIGSLOT_SANITIZE_UNDEFINED=ON %FETCH_FLAG% -G Ninja -Wno-dev
           ) else (
             echo Configuring with clang-cl and ThreadSanitizer
-            cmake %GITHUB_WORKSPACE% -DCMAKE_BUILD_TYPE=%BUILD_TYPE% -DCMAKE_C_COMPILER=clang-cl -DCMAKE_CXX_COMPILER=clang-cl -DSIGSLOT_SANITIZE_THREAD=ON -DSIGSLOT_SANITIZE_UNDEFINED=ON -G Ninja -Wno-dev
+            cmake %GITHUB_WORKSPACE% -DCMAKE_BUILD_TYPE=%BUILD_TYPE% -DCMAKE_C_COMPILER=clang-cl -DCMAKE_CXX_COMPILER=clang-cl -DSIGSLOT_SANITIZE_THREAD=ON -DSIGSLOT_SANITIZE_UNDEFINED=ON %FETCH_FLAG% -G Ninja -Wno-dev
           )
         env:
           MATRIX_CONFIG_NAME: ${{ matrix.config.name }}
@@ -138,12 +145,19 @@ jobs:
           CXX: ${{ matrix.config.cxx }}
 
         run: |
-          if [[ "${{ matrix.config.name }}" == "Ubuntu gcc" || "${{ matrix.config.name }}" == "Ubuntu clang" || "${{ matrix.config.name }}" == "MacOS apple-clang" ]]; then
-            # Use ThreadSanitizer for thread safety on Unix-like systems
-            cmake $GITHUB_WORKSPACE -DCMAKE_BUILD_TYPE=$BUILD_TYPE -DSIGSLOT_SANITIZE_THREAD=ON -DSIGSLOT_SANITIZE_UNDEFINED=ON -G Ninja -Wno-dev
+          FETCH_FLAG=""
+          if [[ "${{ steps.cache-deps.outputs.cache-hit }}" == "true" ]]; then
+            FETCH_FLAG="-DFETCHCONTENT_FULLY_DISCONNECTED=ON"
+          fi
+          if [[ "${{ matrix.config.name }}" == "Ubuntu gcc" ]]; then
+            # GCC: Use both ThreadSanitizer and UBSan
+            cmake $GITHUB_WORKSPACE -DCMAKE_BUILD_TYPE=$BUILD_TYPE -DSIGSLOT_SANITIZE_THREAD=ON -DSIGSLOT_SANITIZE_UNDEFINED=ON $FETCH_FLAG -G Ninja -Wno-dev
+          elif [[ "${{ matrix.config.name }}" == "Ubuntu clang" || "${{ matrix.config.name }}" == "MacOS apple-clang" ]]; then
+            # Clang: Use only ThreadSanitizer (UBSan+TSan causes stdexec hangs)
+            cmake $GITHUB_WORKSPACE -DCMAKE_BUILD_TYPE=$BUILD_TYPE -DSIGSLOT_SANITIZE_THREAD=ON $FETCH_FLAG -G Ninja -Wno-dev
           else
-            # Use AddressSanitizer for memory safety on Windows
-            cmake $GITHUB_WORKSPACE -DCMAKE_BUILD_TYPE=$BUILD_TYPE -DSIGSLOT_SANITIZE_ADDRESS=ON -DSIGSLOT_SANITIZE_UNDEFINED=ON -G Ninja -Wno-dev
+            # Fallback
+            cmake $GITHUB_WORKSPACE -DCMAKE_BUILD_TYPE=$BUILD_TYPE $FETCH_FLAG -G Ninja -Wno-dev
           fi
 
       - name: Build
@@ -159,19 +173,22 @@ jobs:
             # MSVC uses AddressSanitizer and UBSan
             export ASAN_OPTIONS="suppressions=${{github.workspace}}/test/asan_suppressions.txt"
             export UBSAN_OPTIONS="suppressions=${{github.workspace}}/test/ubsan_suppressions.txt"
-            ctest
+          elif [[ "${{ matrix.config.name }}" == "MacOS apple-clang" ]]; then
+            # Apple Clang sanitizers don't support suppression files in the same format
+            # Skip suppressions on macOS
+            :
           else
-            # Other platforms use ThreadSanitizer and UBSan
+            # Linux uses ThreadSanitizer and UBSan with suppression files
             export TSAN_OPTIONS="suppressions=${{github.workspace}}/test/tsan_suppressions.txt"
             export UBSAN_OPTIONS="suppressions=${{github.workspace}}/test/ubsan_suppressions.txt"
-            ctest
           fi
+          ctest
 
-      - name: Run clang-tidy on Ubuntu build host
-        if: startsWith(matrix.config.name, 'Ubuntu')
+      - name: Run clang-tidy on Ubuntu clang build host
+        if: matrix.config.name == 'Ubuntu clang'
         shell: bash
         run: |
-          # Filter compile database to remove stdexec flags
+          # Filter compile database to remove flags clang-tidy doesn't understand
           python3 ./scripts/filter-compile-db.py ${{github.workspace}}/build/compile_commands.json ${{github.workspace}}/build/compile_commands_filtered.json
           clang-tidy -p ${{github.workspace}}/build/compile_commands_filtered.json ${{github.workspace}}/example/basic.cpp
 
@@ -179,7 +196,7 @@ jobs:
         if: startsWith(matrix.config.name, 'Windows clang-cl')
         shell: cmd
         run: |
-          # Filter compile database to remove stdexec flags
+          # Filter compile database to remove flags clang-tidy doesn't understand
           python %GITHUB_WORKSPACE%\scripts\filter-compile-db.py %GITHUB_WORKSPACE%\build\compile_commands.json %GITHUB_WORKSPACE%\build\compile_commands_filtered.json
           clang-tidy -p %GITHUB_WORKSPACE%\build\compile_commands_filtered.json %GITHUB_WORKSPACE%\example\basic.cpp
 
