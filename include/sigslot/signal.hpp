@@ -425,14 +425,184 @@ const T& cow_read(copy_on_write<T>& v) {
     return v.read();
 }
 
+// Simple wrapper to provide uniform interface for non-RCU case
 template<typename T>
-T& cow_write(T& v) {
-    return v;
+class ref_write_guard {
+public:
+    explicit ref_write_guard(T& ref) : m_ref(ref) {}
+    T& get() { return m_ref; }
+private:
+    T& m_ref;
+};
+
+template<typename T>
+ref_write_guard<T> cow_write(T& v) {
+    return ref_write_guard<T>(v);
 }
 
 template<typename T>
 T& cow_write(copy_on_write<T>& v) {
     return v.write();
+}
+
+/**
+ * @brief RCU-style lock-free copy-on-write container.
+ * 
+ * Implements Read-Copy-Update pattern:
+ * - Readers: Lock-free atomic load of shared_ptr (keeps data alive during use)
+ * - Writers: Copy current data, modify copy, atomically publish new version
+ * 
+ * The shared_ptr reference counting provides automatic deferred reclamation:
+ * old data is freed when the last reader releases their shared_ptr.
+ * 
+ * Uses std::atomic_load/store free functions for portability across all
+ * C++20 standard library implementations (some don't support atomic<shared_ptr>).
+ * 
+ * See: https://en.cppreference.com/w/cpp/memory/shared_ptr/atomic
+ * See: https://en.wikipedia.org/wiki/Read-copy-update
+ */
+template<typename T>
+class rcu_cow {
+public:
+    using element_type = T;
+
+    rcu_cow()
+        : m_published(std::make_shared<T>()) {}
+
+    template<typename U>
+        requires(!std::same_as<std::decay_t<U>, rcu_cow>)
+    explicit rcu_cow(U&& x)
+        : m_published(std::make_shared<T>(std::forward<U>(x))) {}
+
+    // Copy: share the published snapshot
+    rcu_cow(const rcu_cow& x) noexcept
+        : m_published(std::atomic_load_explicit(&x.m_published, std::memory_order_acquire)) {}
+
+    // Move: take ownership of published snapshot
+    rcu_cow(rcu_cow&& x) noexcept
+        : m_published(std::atomic_exchange_explicit(&x.m_published, 
+                      std::make_shared<T>(), std::memory_order_acq_rel)) {}
+
+    ~rcu_cow() = default;
+
+    rcu_cow& operator=(const rcu_cow& x) noexcept {
+        if (&x != this) {
+            std::atomic_store_explicit(&m_published,
+                std::atomic_load_explicit(&x.m_published, std::memory_order_acquire),
+                std::memory_order_release);
+        }
+        return *this;
+    }
+
+    rcu_cow& operator=(rcu_cow&& x) noexcept {
+        if (&x != this) {
+            std::atomic_store_explicit(&m_published,
+                std::atomic_exchange_explicit(&x.m_published, 
+                    std::make_shared<T>(), std::memory_order_acq_rel),
+                std::memory_order_release);
+        }
+        return *this;
+    }
+
+    /**
+     * @brief Lock-free read of current published data.
+     * @return shared_ptr that keeps the data alive during use
+     * 
+     * This is the "Read" in RCU. The returned shared_ptr ensures the
+     * data remains valid even if a writer publishes a new version.
+     */
+    [[nodiscard]] std::shared_ptr<const T> read() const noexcept {
+        return std::atomic_load_explicit(&m_published, std::memory_order_acquire);
+    }
+
+    /**
+     * @brief Begin a write operation by copying current data.
+     * @return shared_ptr to a mutable copy for modification
+     * @note Must be called under external lock protection.
+     * 
+     * This is the "Copy" in RCU. Returns a private mutable copy.
+     * After modifications, call publish() to make changes visible.
+     */
+    [[nodiscard]] std::shared_ptr<T> copy_for_write() const {
+        auto current = std::atomic_load_explicit(&m_published, std::memory_order_acquire);
+        return std::make_shared<T>(*current);
+    }
+
+    /**
+     * @brief Publish a modified copy, making it visible to readers.
+     * @param new_data The modified data to publish
+     * @note Must be called under external lock protection.
+     * 
+     * This is the "Update" in RCU. Atomically publishes the new version.
+     * Old readers continue using their snapshot safely.
+     */
+    void publish(std::shared_ptr<T> new_data) {
+        std::atomic_store_explicit(&m_published, std::move(new_data), std::memory_order_release);
+    }
+
+    friend inline void swap(rcu_cow& x, rcu_cow& y) noexcept {
+        auto tmp = std::atomic_load_explicit(&x.m_published, std::memory_order_acquire);
+        std::atomic_store_explicit(&x.m_published,
+            std::atomic_load_explicit(&y.m_published, std::memory_order_acquire),
+            std::memory_order_release);
+        std::atomic_store_explicit(&y.m_published, tmp, std::memory_order_release);
+    }
+
+private:
+    // Use plain shared_ptr with atomic free functions for portability.
+    // std::atomic<shared_ptr<T>> (C++20 P0718R2) is not yet supported by all implementations.
+    std::shared_ptr<T> m_published;
+};
+
+/**
+ * @brief RAII guard for RCU write operations.
+ * 
+ * Holds a mutable copy during modification and publishes on destruction.
+ * This ensures the copy-update cycle completes even if an exception occurs.
+ */
+template<typename T>
+class rcu_write_guard {
+public:
+    rcu_write_guard(rcu_cow<T>& cow) 
+        : m_cow(cow)
+        , m_copy(cow.copy_for_write()) {}
+    
+    ~rcu_write_guard() {
+        if (m_copy) {
+            m_cow.publish(std::move(m_copy));
+        }
+    }
+
+    // Non-copyable, non-movable
+    rcu_write_guard(const rcu_write_guard&) = delete;
+    rcu_write_guard& operator=(const rcu_write_guard&) = delete;
+    rcu_write_guard(rcu_write_guard&&) = delete;
+    rcu_write_guard& operator=(rcu_write_guard&&) = delete;
+
+    T& get() { return *m_copy; }
+    T* operator->() { return m_copy.get(); }
+    T& operator*() { return *m_copy; }
+
+private:
+    rcu_cow<T>& m_cow;
+    std::shared_ptr<T> m_copy;
+};
+
+// Specializations for rcu_cow
+template<typename T>
+std::shared_ptr<const T> cow_read(const rcu_cow<T>& v) {
+    return v.read();
+}
+
+template<typename T>
+rcu_write_guard<T> cow_write(rcu_cow<T>& v) {
+    return rcu_write_guard<T>(v);
+}
+
+// cow_read for shared_ptr (dereference to get the value)
+template<typename T>
+const T& cow_read(const std::shared_ptr<const T>& v) {
+    return *v;
 }
 
 /**
@@ -1062,11 +1232,14 @@ public:
     static constexpr bool is_thread_safe = !std::same_as<Lockable, detail::null_mutex>;
 
 private:
+    // For thread-safe signals, use rcu_cow for lock-free emission.
+    // For non-thread-safe signals, store the list directly.
     template<typename U>
-    using cow_type = std::conditional_t<is_thread_safe, detail::copy_on_write<U>, U>;
+    using cow_type = std::conditional_t<is_thread_safe, detail::rcu_cow<U>, U>;
 
+    // For reading: thread-safe returns shared_ptr (lock-free), non-thread-safe returns const ref
     template<typename U>
-    using cow_copy_type = std::conditional_t<is_thread_safe, detail::copy_on_write<U>, const U&>;
+    using cow_copy_type = std::conditional_t<is_thread_safe, std::shared_ptr<const U>, const U&>;
 
     using lock_type = std::unique_lock<Lockable>;
     using slot_base = detail::slot_base<group_id, T...>;
@@ -1374,7 +1547,8 @@ public:
      */
     size_t disconnect(group_id gid) {
         lock_type lock(m_mutex);
-        for (auto& group : detail::cow_write(m_slots)) {
+        auto guard = detail::cow_write(m_slots);
+        for (auto& group : guard.get()) {
             if (group.gid == gid) {
                 size_t count = group.slts.size();
                 group.slts.clear();
@@ -1405,7 +1579,8 @@ public:
      */
     void block(group_id const& gid) {
         lock_type lock(m_mutex);
-        for (auto& group : detail::cow_write(m_slots)) {
+        auto guard = detail::cow_write(m_slots);
+        for (auto& group : guard.get()) {
             if (group.gid == gid) {
                 for (auto& slt : group.slts) {
                     slt->block();
@@ -1426,7 +1601,8 @@ public:
      */
     void unblock(group_id const& gid) {
         lock_type lock(m_mutex);
-        for (auto& group : detail::cow_write(m_slots)) {
+        auto guard = detail::cow_write(m_slots);
+        for (auto& group : guard.get()) {
             if (group.gid == gid) {
                 for (auto& slt : group.slts) {
                     slt->unblock();
@@ -1516,9 +1692,10 @@ protected:
         lock_type lock(m_mutex);
         const auto idx = state->index();
         const auto& gid = state->group();
+        auto guard = detail::cow_write(m_slots);
 
         // find the group
-        for (auto& group : detail::cow_write(m_slots)) {
+        for (auto& group : guard.get()) {
             if (group.gid == gid) {
                 auto& slts = group.slts;
 
@@ -1535,11 +1712,17 @@ protected:
     }
 
 private:
-    // used to get a reference to the slots for reading
+    // Lock-free read for thread-safe signals (using rcu_cow).
+    // For non-thread-safe signals, just return a const reference.
     template<typename Self>
     inline cow_copy_type<list_type> slots_reference(this Self&& self) {
-        lock_type lock(self.m_mutex);
-        return std::forward<Self>(self).m_slots;
+        if constexpr (is_thread_safe) {
+            // Lock-free: rcu_cow::read() returns shared_ptr snapshot
+            return self.m_slots.read();
+        } else {
+            // Non-thread-safe: return const reference directly
+            return self.m_slots;
+        }
     }
 
     // create a new slot
@@ -1553,7 +1736,8 @@ private:
         const group_id& gid = s->group();
 
         lock_type lock(m_mutex);
-        auto& groups = detail::cow_write(m_slots);
+        auto groups_guard = detail::cow_write(m_slots);
+        auto& groups = groups_guard.get();
 
         // find the group
         auto it = groups.begin();
@@ -1588,7 +1772,8 @@ private:
     template<typename Cond>
     size_t disconnect_if(Cond&& cond) {
         lock_type lock(m_mutex);
-        auto& groups = detail::cow_write(m_slots);
+        auto groups_guard = detail::cow_write(m_slots);
+        auto& groups = groups_guard.get();
 
         size_t count = 0;
 
@@ -1611,7 +1796,7 @@ private:
     }
 
     // to be called under lock: remove all the slots
-    void clear() { detail::cow_write(m_slots).clear(); }
+    void clear() { detail::cow_write(m_slots).get().clear(); }
 
 private:
     Lockable m_mutex;
