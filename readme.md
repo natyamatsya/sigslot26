@@ -2,6 +2,17 @@
 
 Sigslot is a header-only, thread safe implementation of signal-slots for C++.
 
+This fork (`sigslot26`) builds on [palacaze/sigslot](https://github.com/palacaze/sigslot) and [mousebyte/sigslot20](https://github.com/mousebyte/sigslot20), adding C++23 support and async integration.
+
+## Changes from upstream
+
+- **C++23 requirement** - Uses `std::print`, deducing this, and other C++23 features
+- **std::execution (P2300) integration** - Signals can be used as senders via `sigslot::async::as_sender()`
+- **Coroutine support** - Signals are awaitable with `co_await sigslot::async::make_awaitable(sig)`
+- **Qt async adapters** - `connect_on_event_loop()`, `connect_on_thread()`, `as_qfuture()`
+- **Catch2 test framework** - Replaces doctest for unit testing
+- **CI improvements** - Multi-platform builds with sanitizer coverage
+
 ## Features
 
 The main goal was to replace Boost.Signals2.
