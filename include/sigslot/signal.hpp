@@ -3,6 +3,7 @@
 #include <cstring>
 #include <memory>
 #include <mutex>
+#include <optional>
 #include <type_traits>
 #include <utility>
 #include <thread>
@@ -1843,6 +1844,224 @@ using signal_st = signal_base<detail::null_mutex, T...>;
  */
 template <typename... T>
 using signal = signal_base<std::mutex, T...>;
+
+
+/**
+ * signal_interface wraps a signal and provides access control.
+ *
+ * Only the Owner class can emit the signal or block/unblock it.
+ * Other code can only connect/disconnect slots.
+ *
+ * @tparam Owner The class that owns this signal interface.
+ * @tparam T The signal argument types.
+ */
+template <typename Owner, typename... T>
+class signal_interface final {
+public:
+    using signal_type = signal<T...>;
+
+    signal_interface()
+        : m_storage(std::in_place)
+        , m_signal(std::addressof(*m_storage))
+    {}
+
+    explicit signal_interface(signal_type* sig)
+        : m_storage(std::nullopt)
+        , m_signal(sig)
+    {}
+
+    signal_interface(signal_interface const&) = delete;
+    signal_interface& operator=(signal_interface const&) = delete;
+
+    signal_interface(signal_interface&& o) noexcept(false) {
+        if (o.m_storage.has_value()) {
+            m_storage = std::move(o.m_storage);
+            m_signal = std::addressof(*m_storage);
+            o.m_signal = nullptr;
+        } else {
+            std::swap(m_signal, o.m_signal);
+        }
+    }
+
+    signal_interface& operator=(signal_interface&& o) noexcept(false) {
+        if (m_signal != o.m_signal) {
+            if (o.m_storage.has_value()) {
+                m_storage = std::move(o.m_storage);
+                m_signal = std::addressof(*m_storage);
+                o.m_signal = nullptr;
+            } else {
+                std::swap(m_signal, o.m_signal);
+            }
+        }
+        return *this;
+    }
+
+    ~signal_interface() = default;
+
+    // Public interface - anyone can connect/disconnect
+
+    template <typename... Args>
+    connection connect(Args&&... args) {
+        return m_signal->connect(std::forward<Args>(args)...);
+    }
+
+    template <typename... Args>
+    connection connect_extended(Args&&... args) {
+        return m_signal->connect_extended(std::forward<Args>(args)...);
+    }
+
+    template <typename... Args>
+    scoped_connection connect_scoped(Args&&... args) {
+        return m_signal->connect(std::forward<Args>(args)...);
+    }
+
+    template <typename... Args>
+    std::size_t disconnect(Args&&... args) {
+        return m_signal->disconnect(std::forward<Args>(args)...);
+    }
+
+    void disconnect_all() {
+        m_signal->disconnect_all();
+    }
+
+private:
+    friend Owner;
+
+    // Private interface - only Owner can emit or block
+
+    template <typename... Args>
+    void operator()(Args&&... args) {
+        (*m_signal)(std::forward<Args>(args)...);
+    }
+
+    std::size_t slot_count() const noexcept {
+        return m_signal->slot_count();
+    }
+
+    void block() noexcept {
+        m_signal->block();
+    }
+
+    void unblock() noexcept {
+        m_signal->unblock();
+    }
+
+    bool blocked() const noexcept {
+        return m_signal->blocked();
+    }
+
+    std::optional<signal_type> m_storage;
+    signal_type* m_signal;
+};
+
+/**
+ * Single-threaded version of signal_interface.
+ */
+template <typename Owner, typename... T>
+class signal_interface_st final {
+public:
+    using signal_type = signal_st<T...>;
+
+    signal_interface_st()
+        : m_storage(std::in_place)
+        , m_signal(std::addressof(*m_storage))
+    {}
+
+    explicit signal_interface_st(signal_type* sig)
+        : m_storage(std::nullopt)
+        , m_signal(sig)
+    {}
+
+    signal_interface_st(signal_interface_st const&) = delete;
+    signal_interface_st& operator=(signal_interface_st const&) = delete;
+
+    signal_interface_st(signal_interface_st&& o) noexcept(false) {
+        if (o.m_storage.has_value()) {
+            m_storage = std::move(o.m_storage);
+            m_signal = std::addressof(*m_storage);
+            o.m_signal = nullptr;
+        } else {
+            std::swap(m_signal, o.m_signal);
+        }
+    }
+
+    signal_interface_st& operator=(signal_interface_st&& o) noexcept(false) {
+        if (m_signal != o.m_signal) {
+            if (o.m_storage.has_value()) {
+                m_storage = std::move(o.m_storage);
+                m_signal = std::addressof(*m_storage);
+                o.m_signal = nullptr;
+            } else {
+                std::swap(m_signal, o.m_signal);
+            }
+        }
+        return *this;
+    }
+
+    ~signal_interface_st() = default;
+
+    // Public interface - anyone can connect/disconnect
+
+    template <typename... Args>
+    connection connect(Args&&... args) {
+        return m_signal->connect(std::forward<Args>(args)...);
+    }
+
+    template <typename... Args>
+    connection connect_extended(Args&&... args) {
+        return m_signal->connect_extended(std::forward<Args>(args)...);
+    }
+
+    template <typename... Args>
+    scoped_connection connect_scoped(Args&&... args) {
+        return m_signal->connect(std::forward<Args>(args)...);
+    }
+
+    template <typename... Args>
+    std::size_t disconnect(Args&&... args) {
+        return m_signal->disconnect(std::forward<Args>(args)...);
+    }
+
+    void disconnect_all() {
+        m_signal->disconnect_all();
+    }
+
+private:
+    friend Owner;
+
+    // Private interface - only Owner can emit or block
+
+    template <typename... Args>
+    void operator()(Args&&... args) {
+        (*m_signal)(std::forward<Args>(args)...);
+    }
+
+    std::size_t slot_count() const noexcept {
+        return m_signal->slot_count();
+    }
+
+    void block() noexcept {
+        m_signal->block();
+    }
+
+    void unblock() noexcept {
+        m_signal->unblock();
+    }
+
+    bool blocked() const noexcept {
+        return m_signal->blocked();
+    }
+
+    std::optional<signal_type> m_storage;
+    signal_type* m_signal;
+};
+
+// Convenience aliases matching original sigslot20 naming
+template <typename Owner, typename... T>
+using signal_ix = signal_interface<Owner, T...>;
+
+template <typename Owner, typename... T>
+using signal_ix_st = signal_interface_st<Owner, T...>;
 
 } // namespace sigslot
 
