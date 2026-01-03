@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: MIT
 // SPDX-FileCopyrightText: palacaze/sigslot contributors
+// SPDX-FileCopyrightText: natyamatsya/sigslot26 contributors
 
 #include <sigslot/signal.hpp>
 #include <print>

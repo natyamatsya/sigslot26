@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: MIT
+// SPDX-FileCopyrightText: natyamatsya/sigslot26 contributors
+
 #include "test-common.h"
 #include <cassert>
 #include <sigslot/signal.hpp>

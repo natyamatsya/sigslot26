@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: MIT
+// SPDX-FileCopyrightText: palacaze/sigslot contributors
+
 #pragma once
 #include <boost/shared_ptr.hpp>
 #include <boost/weak_ptr.hpp>

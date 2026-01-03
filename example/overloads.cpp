@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: MIT
+// SPDX-FileCopyrightText: palacaze/sigslot contributors
+
 #include <sigslot/signal.hpp>
 
 template<typename... Args, typename C>

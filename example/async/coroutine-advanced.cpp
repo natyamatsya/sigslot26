@@ -1,3 +1,7 @@
+// SPDX-License-Identifier: MIT
+// SPDX-FileCopyrightText: mousebyte/sigslot20 contributors
+// SPDX-FileCopyrightText: natyamatsya/sigslot26 contributors
+
 /**
  * @brief Advanced coroutine support example for sigslot26
  * 

@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: MIT
+// SPDX-FileCopyrightText: palacaze/sigslot contributors
+
 #include <catch2/catch_test_macros.hpp>
 #include "support/signal-matchers.hpp"
 

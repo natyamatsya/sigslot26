@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: MIT
+// SPDX-FileCopyrightText: natyamatsya/sigslot26 contributors
+
 /**
  * @file execution-basic.cpp
  * @brief Example demonstrating std::execution integration with sigslot

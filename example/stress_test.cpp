@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: MIT
+// SPDX-FileCopyrightText: natyamatsya/sigslot26 contributors
+
 /**
  * @file stress_test.cpp
  * @brief Multi-threaded stress test demonstrating sigslot thread safety
