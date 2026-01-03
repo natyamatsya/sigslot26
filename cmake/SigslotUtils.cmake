@@ -18,9 +18,6 @@ endif()
 if (SIGSLOT_COMPILER_CLANG OR SIGSLOT_COMPILER_GCC)
     set(SIGSLOT_COMPILER_CLANG_OR_GCC ON)
 endif()
-if (SIGSLOT_COMPILER_CLANG OR SIGSLOT_COMPILER_CLANGCL)
-    set(SIGSLOT_COMPILER_CLANG_OR_CLANGCL ON)
-endif()
 if (SIGSLOT_COMPILER_CLANG_OR_GCC OR SIGSLOT_COMPILER_CLANGCL)
     set(SIGSLOT_COMPILER_CLANG_OR_CLANGCL_OR_GCC ON)
 endif()
@@ -36,20 +33,7 @@ target_compile_options(Sigslot_CommonWarnings INTERFACE
 
 add_library(Sigslot_ManyWarnings INTERFACE)
 target_compile_options(Sigslot_ManyWarnings INTERFACE
-    $<$<BOOL:${SIGSLOT_COMPILER_CLANG_OR_CLANGCL}>:
-        -Weverything; -Wno-unused-macros;-Wno-newline-eof;-Wno-exit-time-destructors;
-        -Wno-global-constructors;-Wno-gnu-zero-variadic-macro-arguments;-Wno-documentation;
-        -Wno-shadow-field-in-constructor;-Wno-missing-prototypes;-Wno-reserved-identifier;
-        -Wno-documentation-unknown-command;-Wno-ctad-maybe-unsupported;-Wno-c++98-compat;
-        -Wno-c++98-compat-pedantic;-Wno-weak-vtables;-Wno-padded>
-    $<$<BOOL:${SIGSLOT_COMPILER_GCC}>:
-        -Wcast-qual;-Wconversion-null;-Wmissing-declarations;-Woverlength-strings;
-        -Wpointer-arith;-Wunused-local-typedefs;-Wunused-result;-Wvarargs;-Wvla;
-        -Wwrite-strings;-Wconversion;-Wsign-conversion;-Wodr;-Wpedantic;;-pedantic;
-        -Wcast-align;-Wctor-dtor-privacy;-Wdisabled-optimization;-Wformat=2;-Winit-self;
-        -Wlogical-op;-Wmissing-include-dirs;-Wold-style-cast;-Woverloaded-virtual;
-        -Wredundant-decls;-Wno-shadow;-Wsign-promo;-Wstrict-null-sentinel;-Wundef;
-        -fdiagnostics-show-option;-Wno-return-std-move-in-c++11;-Wno-missing-declarations>
+    $<$<BOOL:${SIGSLOT_COMPILER_CLANG_OR_CLANGCL_OR_GCC}>:-Wpedantic>
     $<$<BOOL:${SIGSLOT_COMPILER_CLANG_OR_GCC}>:-fdiagnostics-color=always;-pipe>
     $<$<CXX_COMPILER_ID:MSVC>:/W4>
 )
@@ -105,18 +89,18 @@ target_link_libraries(Sigslot_Libcxx INTERFACE
 )
 
 option(SIGSLOT_ENABLE_COMMON_WARNINGS "Enable common compiler flags" ON)
-option(SIGSLOT_ENABLE_MANY_WARNINGS "Enable most compiler flags" OFF)
+option(SIGSLOT_ENABLE_MANY_WARNINGS "Enable most compiler flags" ON)
 option(SIGSLOT_DISABLE_RTTI "Disable Runtime Type Information" OFF)
 option(SIGSLOT_ENABLE_LTO "Enable link time optimization (release only)" OFF)
 option(SIGSLOT_ENABLE_LIBCXX "Use libcxx with clang" OFF)
-option(SIGSLOT_ENABLE_PROFILING "Add compile flags to help with profiling" OFF)
+option(SIGSLOT_ENABLE_PROFILING "Add compile flags to help with profiling" ON)
 option(SIGSLOT_SANITIZE_ADDRESS "Compile with address sanitizer support" OFF)
-option(SIGSLOT_SANITIZE_THREADS "Compile with thread sanitizer support" OFF)
+option(SIGSLOT_SANITIZE_THREADS "Compile with thread sanitizer support" ON)
 option(SIGSLOT_SANITIZE_UNDEFINED "Compile with undefined sanitizer support" OFF)
 
 # common properties
 function(sigslot_set_properties target scope)
-    target_compile_features(${target} ${scope} cxx_std_14)
+    target_compile_features(${target} ${scope} cxx_std_23)
     set_target_properties(${target} PROPERTIES CXX_EXTENSIONS OFF)
 
     # account for options

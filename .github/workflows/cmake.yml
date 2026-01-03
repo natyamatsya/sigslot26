@@ -1,0 +1,198 @@
+---
+name: CMake
+
+on:
+  push:
+    branches:
+      - master
+      - develop
+
+    paths:
+      - '**.cpp'
+      - '**.hpp'
+      - '**/CMakeLists.txt'
+      - '**.cmake'
+      - '.github/workflows/**.yml'
+
+env:
+  # Customize the CMake build type here (Release, Debug, RelWithDebInfo, etc.)
+  BUILD_TYPE: RelWithDebInfo
+  CTEST_OUTPUT_ON_FAILURE: 1
+  CMAKE_EXPORT_COMPILE_COMMANDS: 1
+
+jobs:
+  build:
+    # The CMake configure and build commands are platform agnostic and should work equally
+    # well on Windows or Mac.  You can convert this to a matrix build if you need
+    # cross-platform coverage.
+    runs-on: ${{ matrix.config.os }}
+    strategy:
+      fail-fast: false
+
+      matrix:
+        config:
+          - {name: "Windows MSVC", os: windows-latest, cc: "cl", cxx: "cl"}
+          - {name: "Windows clang-cl", os: windows-latest, cc: "clang-cl", cxx: "clang-cl"}
+          - {name: "Ubuntu gcc", os: ubuntu-latest, cc: "gcc-14", cxx: "g++-14"}
+          - {name: "Ubuntu clang", os: ubuntu-latest, cc: "clang-18", cxx: "clang++-18"}
+          - {name: "MacOS apple-clang", os: macos-latest, cc: "clang", cxx: "clang++"}
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Create Build Environment
+        # Some projects don't allow in-source building, so create a separate build directory
+        # We'll use this as our working directory for all subsequent commands
+        run: cmake -E make_directory ${{github.workspace}}/build
+
+      - name: Install LLVM/Clang Ubuntu Host
+        if: startsWith(matrix.config.name, 'Ubuntu')
+        shell: bash
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            llvm-18 clang-18 libclang-18-dev clang-tidy-18 \
+            gcc-14 g++-14
+
+      - name: Install Qt
+        uses: jurplel/install-qt-action@v4
+        with:
+          version: '6.8.*'
+          cache: true
+
+      - name: Compute CMake Cache Key
+        shell: bash
+        id: cmake-key
+        run: |
+          # Check if previous build was successful
+          PREV_SUCCESS=""
+          if [[ -f "${{github.workspace}}/.build_successful" ]]; then
+            PREV_SUCCESS="success"
+          elif [[ -f "${{github.workspace}}/.build_in_progress" ]]; then
+            PREV_SUCCESS="failed"
+          else
+            PREV_SUCCESS="first"
+          fi
+          
+          # Debug: Show what we're hashing
+          echo "Matrix config: ${{ matrix.config.name }}"
+          echo "Build type: ${{ env.BUILD_TYPE }}"
+          echo "Run attempt: ${{ github.run_attempt }}"
+          echo "Previous status: $PREV_SUCCESS"
+          echo "CMake files hash: $(echo '${{ hashFiles('CMakeLists.txt', 'cmake/*.cmake') }}')"
+          
+          # Create a hash of all CMake configuration that affects dependency builds
+          # Include previous build status to force cache invalidation after failed builds
+          CONFIG_INPUT="${{ matrix.config.name }}-${{ env.BUILD_TYPE }}-ninja-${{ contains(matrix.config.name, 'MSVC') && 'asan' || 'tsan' }}-${{ hashFiles('CMakeLists.txt', 'cmake/*.cmake') }}-${{ github.run_attempt }}-${PREV_SUCCESS}"
+          echo "Config input: $CONFIG_INPUT"
+          CONFIG_HASH=$(echo "$CONFIG_INPUT" | sha256sum | cut -d' ' -f1)
+          echo "cmake-config-hash=$CONFIG_HASH" >> $GITHUB_OUTPUT
+          echo "prev-status=$PREV_SUCCESS" >> $GITHUB_OUTPUT
+          echo "Full cache key: deps-${{ matrix.config.name }}-$CONFIG_HASH"
+          
+          # Create in-progress marker for this build
+          touch "${{github.workspace}}/.build_in_progress"
+
+      - name: Cache dependencies (Catch2, stdexec)
+        uses: actions/cache@v4
+        with:
+          path: |
+            build/_deps
+          key: deps-${{ matrix.config.name }}-${{ steps.cmake-key.outputs.cmake-config-hash }}
+
+      - name: Clean Build Directory
+        shell: bash
+        run: |
+          BUILD_DIR="${{github.workspace}}/build"
+          mkdir -p "$BUILD_DIR"
+          
+          # Delete everything except cached _deps
+          cd "$BUILD_DIR"
+          find . -mindepth 1 -maxdepth 1 -not -name '_deps' -exec rm -rf {} +
+
+      - name: Setup MSVC Developer Environment
+        if: runner.os == 'Windows' && matrix.config.name == 'Windows MSVC'
+        uses: ilammy/msvc-dev-cmd@v1
+
+      - name: Configure cmake on Windows build host
+        if: runner.os == 'Windows'
+        shell: cmd
+        working-directory: ${{github.workspace}}/build
+        run: |
+          if "%MATRIX_CONFIG_NAME%"=="Windows MSVC" (
+            echo Configuring with MSVC and AddressSanitizer
+            cmake %GITHUB_WORKSPACE% -DCMAKE_BUILD_TYPE=%BUILD_TYPE% -DSIGSLOT_SANITIZE_ADDRESS=ON -DSIGSLOT_SANITIZE_UNDEFINED=ON -G Ninja -Wno-dev
+          ) else (
+            echo Configuring with clang-cl and ThreadSanitizer
+            cmake %GITHUB_WORKSPACE% -DCMAKE_BUILD_TYPE=%BUILD_TYPE% -DCMAKE_C_COMPILER=clang-cl -DCMAKE_CXX_COMPILER=clang-cl -DSIGSLOT_SANITIZE_THREAD=ON -DSIGSLOT_SANITIZE_UNDEFINED=ON -G Ninja -Wno-dev
+          )
+        env:
+          MATRIX_CONFIG_NAME: ${{ matrix.config.name }}
+
+      - name: Configure cmake
+        if: runner.os != 'Windows'
+        shell: bash
+        working-directory: ${{github.workspace}}/build
+        env:
+          CC: ${{ matrix.config.cc }}
+          CXX: ${{ matrix.config.cxx }}
+
+        run: |
+          if [[ "${{ matrix.config.name }}" == "Ubuntu gcc" || "${{ matrix.config.name }}" == "Ubuntu clang" || "${{ matrix.config.name }}" == "MacOS apple-clang" ]]; then
+            # Use ThreadSanitizer for thread safety on Unix-like systems
+            cmake $GITHUB_WORKSPACE -DCMAKE_BUILD_TYPE=$BUILD_TYPE -DSIGSLOT_SANITIZE_THREAD=ON -DSIGSLOT_SANITIZE_UNDEFINED=ON -G Ninja -Wno-dev
+          else
+            # Use AddressSanitizer for memory safety on Windows
+            cmake $GITHUB_WORKSPACE -DCMAKE_BUILD_TYPE=$BUILD_TYPE -DSIGSLOT_SANITIZE_ADDRESS=ON -DSIGSLOT_SANITIZE_UNDEFINED=ON -G Ninja -Wno-dev
+          fi
+
+      - name: Build
+        working-directory: ${{github.workspace}}/build
+        shell: bash
+        run: ninja
+
+      - name: Test
+        working-directory: ${{github.workspace}}/build
+        shell: bash
+        run: |
+          if [[ "${{ matrix.config.name }}" == "Windows MSVC" ]]; then
+            # MSVC uses AddressSanitizer and UBSan
+            export ASAN_OPTIONS="suppressions=${{github.workspace}}/test/asan_suppressions.txt"
+            export UBSAN_OPTIONS="suppressions=${{github.workspace}}/test/ubsan_suppressions.txt"
+            ctest
+          else
+            # Other platforms use ThreadSanitizer and UBSan
+            export TSAN_OPTIONS="suppressions=${{github.workspace}}/test/tsan_suppressions.txt"
+            export UBSAN_OPTIONS="suppressions=${{github.workspace}}/test/ubsan_suppressions.txt"
+            ctest
+          fi
+
+      - name: Run clang-tidy on Ubuntu build host
+        if: startsWith(matrix.config.name, 'Ubuntu')
+        shell: bash
+        run: |
+          # Filter compile database to remove stdexec flags
+          python3 ./scripts/filter-compile-db.py ${{github.workspace}}/build/compile_commands.json ${{github.workspace}}/build/compile_commands_filtered.json
+          clang-tidy -p ${{github.workspace}}/build/compile_commands_filtered.json ${{github.workspace}}/example/basic.cpp
+
+      - name: Run clang-tidy on Windows clang-cl build host
+        if: startsWith(matrix.config.name, 'Windows clang-cl')
+        shell: cmd
+        run: |
+          # Filter compile database to remove stdexec flags
+          python %GITHUB_WORKSPACE%\scripts\filter-compile-db.py %GITHUB_WORKSPACE%\build\compile_commands.json %GITHUB_WORKSPACE%\build\compile_commands_filtered.json
+          clang-tidy -p %GITHUB_WORKSPACE%\build\compile_commands_filtered.json %GITHUB_WORKSPACE%\example\basic.cpp
+
+      # Note: macOS CI doesn't have clang-tidy installed
+      # Ubuntu and Windows clang-cl clang-tidy works with filtered compile database
+
+      - name: Persist Build Success
+        if: always()
+        shell: bash
+        run: |
+          # Replace in-progress marker with success marker
+          if [[ -f "${{github.workspace}}/.build_in_progress" ]]; then
+            rm "${{github.workspace}}/.build_in_progress"
+            touch "${{github.workspace}}/.build_successful"
+          fi
+
