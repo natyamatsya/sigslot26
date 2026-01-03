@@ -1638,6 +1638,10 @@ class signal_interface final {
     signal_interface(signal_interface&& o) /* not noexcept */
         : m_sig(nullptr)
     {
+#if defined(__GNUC__) && !defined(__clang__)
+#pragma GCC diagnostic push
+#pragma GCC diagnostic ignored "-Wmaybe-uninitialized"
+#endif
         if (o.m_sig_storage.has_value()) {
             m_sig_storage.emplace(std::move(*o.m_sig_storage));
             m_sig = std::addressof(*m_sig_storage);
@@ -1645,6 +1649,9 @@ class signal_interface final {
         } else {
             m_sig = o.m_sig;
         }
+#if defined(__GNUC__) && !defined(__clang__)
+#pragma GCC diagnostic pop
+#endif
         o.m_sig = nullptr;
     }
 
