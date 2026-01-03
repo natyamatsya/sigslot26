@@ -1,0 +1,10 @@
+# ThreadSanitizer suppressions for sigslot26 tests
+#
+# These suppress known false positives in Qt and glib internals.
+# Qt's event system uses internal synchronization that TSan doesn't understand.
+
+# Qt internal allocator races
+race:libQt6Core.so
+
+# glib event loop internals (used by Qt on Linux)
+race:libglib-2.0.so

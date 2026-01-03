@@ -1,30 +1,38 @@
-#include "test-common.h"
+
+#include <catch2/catch_test_macros.hpp>
+#include "support/signal-matchers.hpp"
+
+using namespace sigslot::matchers;
+#include <catch2/matchers/catch_matchers_container_properties.hpp>
 #include <sigslot/signal.hpp>
 #include <string>
 #include <sstream>
 #include <cmath>
-#include <cassert>
 
 static int sum = 0;
 
-void f1(int i) { sum += i; }
-struct o1 { void operator()(int i) { sum += 2*i; } };
+void f1(int i) {
+    sum += i;
+}
+struct o1 {
+    void operator()(int i) { sum += 2 * i; }
+};
 
 struct s {
     void f1(int i) { sum += i; }
-    void f2(int i) const { sum += 2*i; }
+    void f2(int i) const { sum += 2 * i; }
 };
 
 struct oo {
     void operator()(int i) { sum += i; }
-    void operator()(double i) { sum += static_cast<int>(std::round(4*i)); }
+    void operator()(double i) { sum += static_cast<int>(std::round(4 * i)); }
 };
 
 struct dummy {};
 
-static_assert(sigslot::trait::is_callable_v<sigslot::trait::typelist<int>, decltype(&s::f1), std::shared_ptr<s>>, "");
+static_assert(sigslot::trait::MemberCallable<decltype(&s::f1), std::shared_ptr<s>, int>, "");
 
-void test_track_shared() {
+TEST_CASE("Track Shared", "[signal_tracking]") {
     sum = 0;
     sigslot::signal<int> sig;
 
@@ -36,21 +44,21 @@ void test_track_shared() {
     auto conn2 = sig.connect(&s::f2, w2);
 
     sig(1);
-    assert(sum == 3);
+    REQUIRE(sum == 3);
 
     s1.reset();
     sig(1);
-    assert(sum == 5);
-    assert(!conn1.valid());
+    REQUIRE(sum == 5);
+    REQUIRE_THAT(conn1, IsDisconnected());
 
     s2.reset();
     sig(1);
-    assert(sum == 5);
-    assert(!conn2.valid());
+    REQUIRE(sum == 5);
+    REQUIRE_THAT(conn2, IsDisconnected());
 }
 
 // bug #2 remove last slot first
-void test_track_shared_reversed() {
+TEST_CASE("Track Shared Reversed", "[signal_tracking]") {
     sum = 0;
     sigslot::signal<int> sig;
 
@@ -62,20 +70,20 @@ void test_track_shared_reversed() {
     auto conn2 = sig.connect(&s::f2, w2);
 
     sig(1);
-    assert(sum == 3);
+    REQUIRE(sum == 3);
 
     s2.reset();
     sig(1);
-    assert(sum == 4);
-    assert(!conn2.valid());
+    REQUIRE(sum == 4);
+    REQUIRE_THAT(conn2, IsDisconnected());
 
     s1.reset();
     sig(1);
-    assert(sum == 4);
-    assert(!conn1.valid());
+    REQUIRE(sum == 4);
+    REQUIRE_THAT(conn1, IsDisconnected());
 }
 
-void test_track_other() {
+TEST_CASE("Track Other", "[signal_tracking]") {
     sum = 0;
     sigslot::signal<int> sig;
 
@@ -87,20 +95,20 @@ void test_track_other() {
     auto conn2 = sig.connect(o1(), w2);
 
     sig(1);
-    assert(sum == 3);
+    REQUIRE(sum == 3);
 
     d1.reset();
     sig(1);
-    assert(sum == 5);
-    assert(!conn1.valid());
+    REQUIRE(sum == 5);
+    REQUIRE_THAT(conn1, IsDisconnected());
 
     d2.reset();
     sig(1);
-    assert(sum == 5);
-    assert(!conn2.valid());
+    REQUIRE(sum == 5);
+    REQUIRE_THAT(conn2, IsDisconnected());
 }
 
-void test_track_overloaded_function_object() {
+TEST_CASE("Track Overloaded Function Object", "[signal_tracking]") {
     sum = 0;
     sigslot::signal<int> sig;
     sigslot::signal<double> sig1;
@@ -108,32 +116,35 @@ void test_track_overloaded_function_object() {
     auto d1 = std::make_shared<dummy>();
     auto conn1 = sig.connect(oo{}, d1);
     sig(1);
-    assert(sum == 1);
+    REQUIRE(sum == 1);
 
     d1.reset();
     sig(1);
-    assert(sum == 1);
-    assert(!conn1.valid());
+    REQUIRE(sum == 1);
+    REQUIRE_THAT(conn1, IsDisconnected());
 
     auto d2 = std::make_shared<dummy>();
     std::weak_ptr<dummy> w2 = d2;
     auto conn2 = sig1.connect(oo{}, w2);
     sig1(1);
-    assert(sum == 5);
+    REQUIRE(sum == 5);
 
     d2.reset();
     sig1(1);
-    assert(sum == 5);
-    assert(!conn2.valid());
+    REQUIRE(sum == 5);
+    REQUIRE_THAT(conn2, IsDisconnected());
 }
 
-void test_track_generic_lambda() {
+TEST_CASE("Track Generic Lambda", "[signal_tracking]") {
     std::stringstream s;
 
-    auto f = [&] (auto a, auto ...args) {
+    auto f = [&](auto a, auto... args) {
         using result_t = int[];
         s << a;
-        result_t r{ 1, ((void)(s << args), 1)..., };
+        result_t r{
+            1,
+            ((void)(s << args), 1)...,
+        };
         (void)r;
     };
 
@@ -149,20 +160,11 @@ void test_track_generic_lambda() {
     sig1(1);
     sig2("foo");
     sig3(4.1);
-    assert(s.str() == "1foo4.1");
+    REQUIRE(s.str() == "1foo4.1");
 
     d1.reset();
     sig1(2);
     sig2("bar");
     sig3(3.0);
-    assert(s.str() == "1foo4.1");
-}
-
-int main() {
-    test_track_shared();
-    test_track_shared_reversed();
-    test_track_other();
-    test_track_overloaded_function_object();
-    test_track_generic_lambda();
-    return 0;
+    REQUIRE(s.str() == "1foo4.1");
 }

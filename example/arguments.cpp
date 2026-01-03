@@ -1,11 +1,12 @@
 #include <sigslot/signal.hpp>
-#include <iostream>
+#include <print>
 #include <string>
 
 struct foo {
     // Notice how we accept a double as first argument here
     // This is fine because float is convertible to double
-    void bar(float d, int i, bool b, std::string &s) {
+    // NOLINTNEXTLINE(readability-convert-member-functions-to-static)
+    void bar(float d, int i, bool b, std::string& s) {
         s = b ? std::to_string(i) : std::to_string(d);
     }
 };
@@ -13,8 +14,9 @@ struct foo {
 // Function objects can cope with default arguments and overloading.
 // It does not work with static and member functions.
 struct obj {
-    void operator()(float, int, bool, std::string &, int = 0) {
-        std::cout << "I was here\n";
+    void operator()(float /*unused*/, int /*unused*/, bool /*unused*/, std::string& /*unused*/,
+                    int /*unused*/ = 0) {
+        std::println("I was here");
     }
 
     void operator()() {}
@@ -22,13 +24,11 @@ struct obj {
 
 // A generic function object that deals with any input argument
 struct printer {
-    template <typename T, typename... Ts>
-    void operator()(T a, Ts && ...args) const {
-       std::cout << a;
-        (void)std::initializer_list<int>{
-            ((void)(std::cout << " " << std::forward<Ts>(args)), 1)...
-        };
-        std::cout << "\n";
+    template<typename T, typename... Ts>
+    void operator()(T a, Ts&&... args) const {
+        std::print("{}", a);
+        ((std::print(" {}", std::forward<Ts>(args))), ...);
+        std::println("");
     }
 };
 
@@ -37,12 +37,10 @@ int main() {
     sigslot::signal<float, int, bool, std::string&> sig;
 
     // a Generic lambda that prints its arguments to stdout
-    auto lambda_printer = [] (auto a, auto && ...args) {
-        std::cout << a;
-        (void)std::initializer_list<int>{
-            ((void)(std::cout << " " << args), 1)...
-        };
-        std::cout << "\n";
+    auto lambda_printer = [](auto a, auto&&... args) static {
+        std::print("{}", a);
+        ((std::print(" {}", args)), ...);
+        std::println("");
     };
 
     // connect the slots
@@ -52,8 +50,8 @@ int main() {
     sig.connect(lambda_printer);
     sig.connect(obj());
 
-    float f = 1.f;
-    short i = 2;
+    float f = 1.F;
+    int16_t i = 2;
     std::string s = "0";
 
     // emit a signal
@@ -62,4 +60,3 @@ int main() {
 
     return 0;
 }
-

@@ -1,88 +1,96 @@
 #pragma once
+
+/**
+ * @file qt.hpp
+ * @brief Qt adapter for sigslot object lifetime tracking
+ * 
+ * Provides thread-safe adapters for QSharedPointer and QWeakPointer
+ * object lifetime tracking when connected to signals.
+ * 
+ * @note Raw QObject pointers are not directly supported as they cannot provide
+ * thread-safe weak pointer semantics. Use QSharedPointer for tracked objects.
+ * 
+ * ## Bridging Legacy QObject* Code
+ * 
+ * If you have existing code with raw QObject pointers, you can create a
+ * non-owning QSharedPointer for tracking:
+ * 
+ * @code
+ * // Legacy QObject owned elsewhere (e.g., by Qt parent or manual delete)
+ * MyQObject* legacyObj = ...;
+ * 
+ * // Create non-owning shared pointer (null deleter = won't delete)
+ * auto tracked = QSharedPointer<MyQObject>(legacyObj, [](MyQObject*){});
+ * 
+ * // Now you can connect with lifetime tracking
+ * sig.connect(&MyQObject::slot, tracked);
+ * 
+ * // IMPORTANT: You must ensure 'tracked' outlives the signal connection,
+ * // or manually disconnect before the QObject is destroyed.
+ * @endcode
+ * 
+ * @warning The bridging pattern shifts responsibility to you: ensure the
+ * QSharedPointer outlives the raw pointer, or disconnect manually.
+ * 
+ * Requires Qt 6.5+
+ */
+
 #include <type_traits>
 #include <QtGlobal>
 #include <QSharedPointer>
-#include <QPointer>
-#include <QObject>
+
+#if QT_VERSION < QT_VERSION_CHECK(6, 5, 0)
+#error "Qt 6.5 or later is required for sigslot Qt adapter"
+#endif
+
+namespace sigslot::detail {
 
 /**
- * Definition of a few adapters that allow object life tracking for QObject,
- * QWeakPointer and QSharedPointer objects, when connected to signals.
+ * @brief Thread-safe weak pointer adapter for QWeakPointer
+ * 
+ * Wraps QWeakPointer to provide the weak pointer interface expected by sigslot.
+ * Thread-safe: lock() atomically promotes to QSharedPointer or returns null.
+ * 
+ * @tparam T The pointee type
  */
-
-namespace sigslot {
-namespace detail {
-
-// a weak pointer adapter to allow QObject life tracking
-template <typename T>
-struct qpointer_adapter {
-    qpointer_adapter(T *o) noexcept
-        : m_ptr{o}
-    {}
-
-    void reset() noexcept {
-        m_ptr.clear();
-    }
-
-    bool expired() const noexcept {
-        return m_ptr.isNull();
-    }
-
-    // Warning: very unsafe because QPointer does not provide weak pointer semantics
-    // In a multithreaded context, m_ptr may very well be destroyed in the lapse of
-    // time between expired() and data() (and also while data() is being used).
-    T* lock() const noexcept {
-        return expired() ? nullptr : m_ptr.data();
-    }
-
-private:
-    QPointer<T> m_ptr;
-};
-
-// a wrapper that exposes the right concepts for QWeakPointer
-template <typename T>
+template<typename T>
 struct qweakpointer_adapter {
-    qweakpointer_adapter(QWeakPointer<T> o) noexcept
-        : m_ptr{std::move(o)}
-    {}
+    explicit qweakpointer_adapter(QWeakPointer<T> o) noexcept
+        : m_ptr{std::move(o)} {}
 
-    void reset() noexcept {
-        m_ptr.clear();
-    }
+    void reset() noexcept { m_ptr.clear(); }
 
-    bool expired() const noexcept {
-        return m_ptr.isNull();
-    }
+    [[nodiscard]] bool expired() const noexcept { return m_ptr.isNull(); }
 
-    QSharedPointer<T> lock() const noexcept {
-        return m_ptr.lock();
-    }
+    [[nodiscard]] QSharedPointer<T> lock() const noexcept { return m_ptr.lock(); }
 
 private:
     QWeakPointer<T> m_ptr;
 };
 
-} // namespace detail
-} // namespace sigslot
+} // namespace sigslot::detail
 
 
 QT_BEGIN_NAMESPACE
 
-template <typename T>
-std::enable_if_t<std::is_base_of<QObject, T>::value, sigslot::detail::qpointer_adapter<T>>
-to_weak(T *p) {
-    return {p};
-}
-
-template <typename T>
+/**
+ * @brief Convert QWeakPointer to trackable adapter
+ * @param p QWeakPointer to wrap
+ * @return Thread-safe weak pointer adapter for lifetime tracking
+ */
+template<typename T>
 sigslot::detail::qweakpointer_adapter<T> to_weak(QWeakPointer<T> p) {
-    return {p};
+    return sigslot::detail::qweakpointer_adapter<T>{std::move(p)};
 }
 
-template <typename T>
+/**
+ * @brief Convert QSharedPointer to trackable weak pointer adapter
+ * @param p QSharedPointer to create weak reference from
+ * @return Thread-safe weak pointer adapter for lifetime tracking
+ */
+template<typename T>
 sigslot::detail::qweakpointer_adapter<T> to_weak(QSharedPointer<T> p) {
-    return {p};
+    return sigslot::detail::qweakpointer_adapter<T>{p.toWeakRef()};
 }
 
 QT_END_NAMESPACE
-

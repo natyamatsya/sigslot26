@@ -1,18 +1,25 @@
-#include "test-common.h"
+#include <catch2/catch_test_macros.hpp>
+#include "support/signal-matchers.hpp"
+
+using namespace sigslot::matchers;
+#include <catch2/matchers/catch_matchers_container_properties.hpp>
 #include <sigslot/signal.hpp>
 #include <string>
 #include <sstream>
-#include <cassert>
 #include <cmath>
 
 static int sum = 0;
 
-void f1(int i) { sum += i; }
-void f2(int i) noexcept { sum += 2*i; }
+void f1(int i) {
+    sum += i;
+}
+void f2(int i) noexcept {
+    sum += 2 * i;
+}
 
 struct s {
     static void s1(int i) { sum += i; }
-    static void s2(int i) noexcept { sum += 2*i; }
+    static void s2(int i) noexcept { sum += 2 * i; }
 
     void f1(int i) { sum += i; }
     void f2(int i) const { sum += i; }
@@ -26,79 +33,97 @@ struct s {
 
 struct oo {
     void operator()(int i) { sum += i; }
-    void operator()(double i) { sum += int(std::round(4*i)); }
+    void operator()(double i) { sum += int(std::round(4 * i)); }
 };
 
-struct o1 { void operator()(int i) { sum += i; } };
-struct o2 { void operator()(int i) const { sum += i; } };
-struct o3 { void operator()(int i) volatile { sum += i; } };
-struct o4 { void operator()(int i) const volatile { sum += i; } };
-struct o5 { void operator()(int i) noexcept { sum += i; } };
-struct o6 { void operator()(int i) const noexcept { sum += i; } };
-struct o7 { void operator()(int i) volatile noexcept { sum += i; } };
-struct o8 { void operator()(int i) const volatile noexcept { sum += i; } };
+struct o1 {
+    void operator()(int i) { sum += i; }
+};
+struct o2 {
+    void operator()(int i) const { sum += i; }
+};
+struct o3 {
+    void operator()(int i) volatile { sum += i; }
+};
+struct o4 {
+    void operator()(int i) const volatile { sum += i; }
+};
+struct o5 {
+    void operator()(int i) noexcept { sum += i; }
+};
+struct o6 {
+    void operator()(int i) const noexcept { sum += i; }
+};
+struct o7 {
+    void operator()(int i) volatile noexcept { sum += i; }
+};
+struct o8 {
+    void operator()(int i) const volatile noexcept { sum += i; }
+};
 
-void test_slot_count() {
+TEST_CASE("Slot Count", "[signal]") {
     sigslot::signal<int> sig;
     s p;
 
     sig.connect(&s::f1, &p);
-    assert(sig.slot_count() == 1);
+    REQUIRE_THAT(sig, HasSlots(1));
     sig.connect(&s::f2, &p);
-    assert(sig.slot_count() == 2);
+    REQUIRE_THAT(sig, HasSlots(2));
     sig.connect(&s::f3, &p);
-    assert(sig.slot_count() == 3);
+    REQUIRE_THAT(sig, HasSlots(3));
     sig.connect(&s::f4, &p);
-    assert(sig.slot_count() == 4);
+    REQUIRE_THAT(sig, HasSlots(4));
     sig.connect(&s::f5, &p);
-    assert(sig.slot_count() == 5);
+    REQUIRE_THAT(sig, HasSlots(5));
     sig.connect(&s::f6, &p);
-    assert(sig.slot_count() == 6);
+    REQUIRE_THAT(sig, HasSlots(6));
 
     {
         sigslot::scoped_connection conn = sig.connect(&s::f7, &p);
-        assert(sig.slot_count() == 7);
+        REQUIRE_THAT(sig, HasSlots(7));
     }
-    assert(sig.slot_count() == 6);
+    REQUIRE_THAT(sig, HasSlots(6));
 
     auto conn = sig.connect(&s::f8, &p);
-    assert(sig.slot_count() == 7);
+    REQUIRE_THAT(conn, IsConnected());
+    REQUIRE_THAT(sig, HasSlots(7));
     conn.disconnect();
-    assert(sig.slot_count() == 6);
+    REQUIRE_THAT(sig, HasSlots(6));
 
     sig.disconnect_all();
-    assert(sig.slot_count() == 0);
+    REQUIRE_THAT(sig, HasNoSlots());
 }
 
-void test_free_connection() {
+TEST_CASE("Free Connection", "[signal]") {
     sum = 0;
     sigslot::signal<int> sig;
 
     auto c1 = sig.connect(f1);
+    REQUIRE_THAT(sig, IsConnectedTo(&f1));
     sig(1);
-    assert(sum == 1);
+    REQUIRE(sum == 1);
 
     sig.connect(f2);
-    sigslot::connect(sig, f1);
+    REQUIRE_THAT(sig, IsConnectedTo(&f1));
+    REQUIRE_THAT(sig, IsConnectedTo(&f2));
     sig(1);
-    assert(sum == 5);
+    REQUIRE(sum == 4);
 }
 
-void test_static_connection() {
+TEST_CASE("Static Connection", "[signal]") {
     sum = 0;
     sigslot::signal<int> sig;
 
     sig.connect(&s::s1);
     sig(1);
-    assert(sum == 1);
+    REQUIRE(sum == 1);
 
     sig.connect(&s::s2);
-    sigslot::connect(sig, &s::s1);
     sig(1);
-    assert(sum == 5);
+    REQUIRE(sum == 4);
 }
 
-void test_pmf_connection() {
+TEST_CASE("Pmf Connection", "[signal]") {
     sum = 0;
     sigslot::signal<int> sig;
     s p;
@@ -111,13 +136,12 @@ void test_pmf_connection() {
     sig.connect(&s::f6, &p);
     sig.connect(&s::f7, &p);
     sig.connect(&s::f8, &p);
-    sigslot::connect(sig, &s::f1, &p);
 
     sig(1);
-    assert(sum == 9);
+    REQUIRE(sum == 8);
 }
 
-void test_const_pmf_connection() {
+TEST_CASE("Const Pmf Connection", "[signal]") {
     sum = 0;
     sigslot::signal<int> sig;
     const s p;
@@ -126,13 +150,12 @@ void test_const_pmf_connection() {
     sig.connect(&s::f4, &p);
     sig.connect(&s::f6, &p);
     sig.connect(&s::f8, &p);
-    sigslot::connect(sig, &s::f2, &p);
 
     sig(1);
-    assert(sum == 5);
+    REQUIRE(sum == 4);
 }
 
-void test_function_object_connection() {
+TEST_CASE("Function Object Connection", "[signal]") {
     sum = 0;
     sigslot::signal<int> sig;
 
@@ -144,50 +167,48 @@ void test_function_object_connection() {
     sig.connect(o6{});
     sig.connect(o7{});
     sig.connect(o8{});
-    sigslot::connect(sig, o1{});
 
     sig(1);
-    assert(sum == 9);
+    REQUIRE(sum == 8);
 }
 
-void test_overloaded_function_object_connection() {
+TEST_CASE("Overloaded Function Object Connection", "[signal]") {
     sum = 0;
     sigslot::signal<int> sig;
     sigslot::signal<double> sig1;
 
     sig.connect(oo{});
-    sigslot::connect(sig, oo{});
     sig(1);
-    assert(sum == 2);
+    REQUIRE(sum == 1);
 
     sig1.connect(oo{});
-    sigslot::connect(sig1, oo{});
     sig1(1);
-    assert(sum == 10);
+    REQUIRE(sum == 5);
 }
 
-void test_lambda_connection() {
+TEST_CASE("Lambda Connection", "[signal]") {
     sum = 0;
     sigslot::signal<int> sig;
 
     sig.connect([&](int i) { sum += i; });
-    sigslot::connect(sig, [&](int i) { sum += i; });
     sig(1);
-    assert(sum == 2);
+    REQUIRE(sum == 1);
 
-    sig.connect([&](int i) mutable { sum += 2*i; });
-    sigslot::connect(sig, [&](int i) mutable { sum += 2*i; });
+    sig.connect([&](int i) mutable { sum += 2 * i; });
     sig(1);
-    assert(sum == 8);
+    REQUIRE(sum == 4);
 }
 
-void test_generic_lambda_connection() {
+TEST_CASE("Generic Lambda Connection", "[signal]") {
     std::stringstream s;
 
-    auto f = [&] (auto a, auto ...args) {
+    auto f = [&](auto a, auto... args) {
         using result_t = int[];
         s << a;
-        result_t r{ 1, ((void)(s << args), 1)..., };
+        result_t r{
+            1,
+            ((void)(s << args), 1)...,
+        };
         (void)r;
     };
 
@@ -198,83 +219,61 @@ void test_generic_lambda_connection() {
     sig1.connect(f);
     sig2.connect(f);
     sig3.connect(f);
-    sigslot::connect(sig1, f);
-    sigslot::connect(sig2, f);
-    sigslot::connect(sig3, f);
     sig1(1);
     sig2("foo");
     sig3(4.1);
 
-    assert(s.str() == "11foofoo4.14.1");
+    REQUIRE(s.str() == "1foo4.1");
 }
 
-void test_lvalue_emission() {
+TEST_CASE("Lvalue Emission", "[signal]") {
     sum = 0;
     sigslot::signal<int> sig;
 
     auto c1 = sig.connect(f1);
     int v = 1;
     sig(v);
-    assert(sum == 1);
+    REQUIRE(sum == 1);
 
     sig.connect(f2);
     sig(v);
-    assert(sum == 4);
+    REQUIRE(sum == 4);
 }
 
-void test_mutation() {
+TEST_CASE("Mutation", "[signal]") {
     int res = 0;
     sigslot::signal<int&> sig;
 
-    sig.connect([](int &r) { r += 1; });
+    sig.connect([](int& r) { r += 1; });
     sig(res);
-    assert(res == 1);
+    REQUIRE(res == 1);
 
-    sig.connect([](int &r) mutable { r += 2; });
+    sig.connect([](int& r) mutable { r += 2; });
     sig(res);
-    assert(res == 4);
+    REQUIRE(res == 4);
 }
 
-void test_compatible_args() {
+TEST_CASE("Compatible Args", "[signal]") {
     long ll = 0;
     std::string ss;
     short ii = 0;
 
-    auto f = [&] (long l, const std::string &s, short i) {
-        ll = l; ss = s; ii = i;
+    auto f = [&](long l, const std::string& s, short i) {
+        ll = l;
+        ss = s;
+        ii = i;
     };
 
     sigslot::signal<int, std::string, bool> sig;
     sig.connect(f);
     sig('0', "foo", true);
 
-    assert(ll == 48);
-    assert(ss == "foo");
-    assert(ii == 1);
+    REQUIRE(ll == 48);
+    REQUIRE(ss == "foo");
+    REQUIRE(ii == 1);
 }
 
-void test_compatible_args_chaining() {
-    long ll = 0;
-    std::string ss;
-    short ii = 0;
-
-    auto f = [&] (long l, const std::string &s, short i) {
-        ll = l; ss = s; ii = i;
-    };
-
-    sigslot::signal<long, std::string, short> sig1;
-    sig1.connect(f);
-
-    sigslot::signal<int, std::string, bool> sig2;
-    sigslot::connect(sig2, sig1);
-    sig2('0', "foo", true);
-
-    assert(ll == 48);
-    assert(ss == "foo");
-    assert(ii == 1);
-}
-
-void test_disconnection() {
+TEST_CASE("Disconnection", "[signal]") {
     // test removing only connected
     {
         sum = 0;
@@ -282,12 +281,12 @@ void test_disconnection() {
 
         auto sc = sig.connect(f1);
         sig(1);
-        assert(sum == 1);
+        REQUIRE(sum == 1);
 
         sc.disconnect();
         sig(1);
-        assert(sum == 1);
-        assert(!sc.valid());
+        REQUIRE(sum == 1);
+        REQUIRE_THAT(sc, IsDisconnected());
     }
 
     // test removing first connected
@@ -297,16 +296,16 @@ void test_disconnection() {
 
         auto sc = sig.connect(f1);
         sig(1);
-        assert(sum == 1);
+        REQUIRE(sum == 1);
 
         sig.connect(f2);
         sig(1);
-        assert(sum == 4);
+        REQUIRE(sum == 4);
 
         sc.disconnect();
         sig(1);
-        assert(sum == 6);
-        assert(!sc.valid());
+        REQUIRE(sum == 6);
+        REQUIRE_THAT(sc, IsDisconnected());
     }
 
     // test removing last connected
@@ -316,20 +315,20 @@ void test_disconnection() {
 
         sig.connect(f1);
         sig(1);
-        assert(sum == 1);
+        REQUIRE(sum == 1);
 
         auto sc = sig.connect(f2);
         sig(1);
-        assert(sum == 4);
+        REQUIRE(sum == 4);
 
         sc.disconnect();
         sig(1);
-        assert(sum == 5);
-        assert(!sc.valid());
+        REQUIRE(sum == 5);
+        REQUIRE_THAT(sc, IsDisconnected());
     }
 }
 
-void test_disconnection_by_callable() {
+TEST_CASE("Disconnection By Callable", "[signal]") {
     // disconnect a function pointer
     {
         sum = 0;
@@ -339,11 +338,11 @@ void test_disconnection_by_callable() {
         sig.connect(f2);
         sig.connect(f2);
         sig(1);
-        assert(sum == 5);
+        REQUIRE(sum == 5);
         auto c = sig.disconnect(&f2);
-        assert(c == 2);
+        REQUIRE(c == 2);
         sig(1);
-        assert(sum == 6);
+        REQUIRE(sum == 6);
     }
 
     // disconnect a function
@@ -354,10 +353,10 @@ void test_disconnection_by_callable() {
         sig.connect(f1);
         sig.connect(f2);
         sig(1);
-        assert(sum == 3);
+        REQUIRE(sum == 3);
         sig.disconnect(f1);
         sig(1);
-        assert(sum == 5);
+        REQUIRE(sum == 5);
     }
 
 #ifdef SIGSLOT_RTTI_ENABLED
@@ -370,10 +369,10 @@ void test_disconnection_by_callable() {
         sig.connect(&s::f1, &p);
         sig.connect(&s::f2, &p);
         sig(1);
-        assert(sum == 2);
+        REQUIRE(sum == 2);
         sig.disconnect(&s::f1);
         sig(1);
-        assert(sum == 3);
+        REQUIRE(sum == 3);
     }
 
     // disconnect by function object
@@ -384,10 +383,10 @@ void test_disconnection_by_callable() {
         sig.connect(o1{});
         sig.connect(o2{});
         sig(1);
-        assert(sum == 2);
+        REQUIRE(sum == 2);
         sig.disconnect(o1{});
         sig(1);
-        assert(sum == 3);
+        REQUIRE(sum == 3);
     }
 
     // disconnect by lambda
@@ -395,19 +394,19 @@ void test_disconnection_by_callable() {
         sum = 0;
         sigslot::signal<int> sig;
         auto l1 = [&](int i) { sum += i; };
-        auto l2 = [&](int i) { sum += 2*i; };
+        auto l2 = [&](int i) { sum += 2 * i; };
         sig.connect(l1);
         sig.connect(l2);
         sig(1);
-        assert(sum == 3);
+        REQUIRE(sum == 3);
         sig.disconnect(l1);
         sig(1);
-        assert(sum == 5);
+        REQUIRE(sum == 5);
     }
 #endif
 }
 
-void test_disconnection_by_object() {
+TEST_CASE("Disconnection By Object", "[signal]") {
     // disconnect by pointer
     {
         sum = 0;
@@ -417,10 +416,10 @@ void test_disconnection_by_object() {
         sig.connect(&s::f1, &p1);
         sig.connect(&s::f2, &p2);
         sig(1);
-        assert(sum == 2);
+        REQUIRE(sum == 2);
         sig.disconnect(&p1);
         sig(1);
-        assert(sum == 3);
+        REQUIRE(sum == 3);
     }
 
     // disconnect by shared pointer
@@ -433,14 +432,14 @@ void test_disconnection_by_object() {
         sig.connect(&s::f1, p1);
         sig.connect(&s::f2, &p2);
         sig(1);
-        assert(sum == 2);
+        REQUIRE(sum == 2);
         sig.disconnect(p1);
         sig(1);
-        assert(sum == 3);
+        REQUIRE(sum == 3);
     }
 }
 
-void test_disconnection_by_object_and_pmf() {
+TEST_CASE("Disconnection By Object And Pmf", "[signal]") {
     // disconnect by pointer
     {
         sum = 0;
@@ -452,10 +451,10 @@ void test_disconnection_by_object_and_pmf() {
         sig.connect(&s::f2, &p1);
         sig.connect(&s::f2, &p2);
         sig(1);
-        assert(sum == 4);
+        REQUIRE(sum == 4);
         sig.disconnect(&s::f1, &p2);
         sig(1);
-        assert(sum == 7);
+        REQUIRE(sum == 7);
     }
 
     // disconnect by shared pointer
@@ -470,10 +469,10 @@ void test_disconnection_by_object_and_pmf() {
         sig.connect(&s::f2, p1);
         sig.connect(&s::f2, p2);
         sig(1);
-        assert(sum == 4);
+        REQUIRE(sum == 4);
         sig.disconnect(&s::f1, p2);
         sig(1);
-        assert(sum == 7);
+        REQUIRE(sum == 7);
     }
 
     // disconnect by tracker
@@ -487,116 +486,116 @@ void test_disconnection_by_object_and_pmf() {
         sig.connect(f1, t);
         sig.connect(f2, t);
         sig(1);
-        assert(sum == 6);
+        REQUIRE(sum == 6);
         sig.disconnect(f2, t);
         sig(1);
-        assert(sum == 10);
+        REQUIRE(sum == 10);
     }
 }
 
-void test_scoped_connection() {
+TEST_CASE("Scoped Connection", "[signal]") {
     sum = 0;
     sigslot::signal<int> sig;
 
     {
         auto sc1 = sig.connect_scoped(f1);
         sig(1);
-        assert(sum == 1);
+        REQUIRE(sum == 1);
 
         auto sc2 = sig.connect_scoped(f2);
         sig(1);
-        assert(sum == 4);
+        REQUIRE(sum == 4);
     }
 
     sig(1);
-    assert(sum == 4);
+    REQUIRE(sum == 4);
 
     sum = 0;
 
     {
         sigslot::scoped_connection sc1 = sig.connect(f1);
         sig(1);
-        assert(sum == 1);
+        REQUIRE(sum == 1);
 
         auto sc2 = sig.connect_scoped(f2);
         sig(1);
-        assert(sum == 4);
+        REQUIRE(sum == 4);
     }
 
     sig(1);
-    assert(sum == 4);
+    REQUIRE(sum == 4);
 }
 
-void test_connection_blocking() {
+TEST_CASE("Connection Blocking", "[signal]") {
     sum = 0;
     sigslot::signal<int> sig;
 
     auto c1 = sig.connect(f1);
     sig.connect(f2);
     sig(1);
-    assert(sum == 3);
+    REQUIRE(sum == 3);
 
     c1.block();
     sig(1);
-    assert(sum == 5);
+    REQUIRE(sum == 5);
 
     c1.unblock();
     sig(1);
-    assert(sum == 8);
+    REQUIRE(sum == 8);
 }
 
-void test_connection_blocker() {
+TEST_CASE("Connection Blocker", "[signal]") {
     sum = 0;
     sigslot::signal<int> sig;
 
     auto c1 = sig.connect(f1);
     sig.connect(f2);
     sig(1);
-    assert(sum == 3);
+    REQUIRE(sum == 3);
 
     {
         auto cb = c1.blocker();
         sig(1);
-        assert(sum == 5);
+        REQUIRE(sum == 5);
     }
 
     sig(1);
-    assert(sum == 8);
+    REQUIRE(sum == 8);
 }
 
-void test_signal_blocking() {
+TEST_CASE("Signal Blocking", "[signal]") {
     sum = 0;
     sigslot::signal<int> sig;
 
     sig.connect(f1);
     sig.connect(f2);
     sig(1);
-    assert(sum == 3);
+    REQUIRE(sum == 3);
 
     sig.block();
     sig(1);
-    assert(sum == 3);
+    REQUIRE(sum == 3);
 
     sig.unblock();
     sig(1);
-    assert(sum == 6);
+    REQUIRE(sum == 6);
 }
 
-void test_all_disconnection() {
+TEST_CASE("All Disconnection", "[signal]") {
     sum = 0;
     sigslot::signal<int> sig;
 
     sig.connect(f1);
     sig.connect(f2);
     sig(1);
-    assert(sum == 3);
+    REQUIRE(sum == 3);
 
     sig.disconnect_all();
     sig(1);
-    assert(sum == 3);
+    REQUIRE(sum == 3);
 }
 
-void test_connection_copying_moving() {
+TEST_CASE("Connection Copying Moving", "[signal]") {
     sum = 0;
     sigslot::signal<int> sig;
 
@@ -610,48 +609,48 @@ void test_connection_copying_moving() {
     auto sc6{std::move(sc4)};
 
     sig(1);
-    assert(sum == 3);
+    REQUIRE(sum == 3);
 
     sc5.block();
     sig(1);
-    assert(sum == 5);
+    REQUIRE(sum == 5);
 
     sc1.unblock();
     sig(1);
-    assert(sum == 8);
+    REQUIRE(sum == 8);
 
     sc6.disconnect();
     sig(1);
-    assert(sum == 9);
+    REQUIRE(sum == 9);
 }
 
-void test_scoped_connection_moving() {
+TEST_CASE("Scoped Connection Moving", "[signal]") {
     sum = 0;
     sigslot::signal<int> sig;
 
     {
         auto sc1 = sig.connect_scoped(f1);
         sig(1);
-        assert(sum == 1);
+        REQUIRE(sum == 1);
 
         auto sc2 = sig.connect_scoped(f2);
         sig(1);
-        assert(sum == 4);
+        REQUIRE(sum == 4);
 
         auto sc3 = std::move(sc1);
         sig(1);
-        assert(sum == 7);
+        REQUIRE(sum == 7);
 
         auto sc4{std::move(sc2)};
         sig(1);
-        assert(sum == 10);
+        REQUIRE(sum == 10);
     }
 
     sig(1);
-    assert(sum == 10);
+    REQUIRE(sum == 10);
 }
 
-void test_signal_moving() {
+TEST_CASE("Signal Moving", "[signal]") {
     sum = 0;
     sigslot::signal<int> sig;
 
@@ -659,39 +658,40 @@ void test_signal_moving() {
     sig.connect(f2);
 
     sig(1);
-    assert(sum == 3);
+    REQUIRE(sum == 3);
 
     auto sig2 = std::move(sig);
     sig2(1);
-    assert(sum == 6);
+    REQUIRE(sum == 6);
 
     auto sig3 = std::move(sig2);
     sig3(1);
-    assert(sum == 9);
+    REQUIRE(sum == 9);
 }
 
-template <typename T>
+template<typename T>
 struct object {
     object();
-    object(T i) : v{i} {}
+    object(T i)
+        : v{i} {}
 
-    const T & val() const { return v; }
-    T & val() { return v; }
-    void set_val(const T &i) {
+    const T& val() const { return v; }
+    T& val() { return v; }
+    void set_val(const T& i) {
         if (i != v) {
             v = i;
             s(i);
         }
     }
 
-    sigslot::signal<T> & sig() { return s; }
+    sigslot::signal<T>& sig() { return s; }
 
 private:
     T v;
     sigslot::signal<T> s;
 };
 
-void test_loop() {
+TEST_CASE("Loop", "[signal]") {
     object<int> i1(0);
     object<int> i2(3);
 
@@ -700,36 +700,6 @@ void test_loop() {
 
     i1.set_val(1);
 
-    assert(i1.val() == 1);
-    assert(i2.val() == 1);
-}
-
-int main() {
-    test_free_connection();
-    test_static_connection();
-    test_pmf_connection();
-    test_const_pmf_connection();
-    test_function_object_connection();
-    test_overloaded_function_object_connection();
-    test_lambda_connection();
-    test_generic_lambda_connection();
-    test_lvalue_emission();
-    test_compatible_args();
-    test_compatible_args_chaining();
-    test_mutation();
-    test_disconnection();
-    test_disconnection_by_callable();
-    test_disconnection_by_object();
-    test_disconnection_by_object_and_pmf();
-    test_scoped_connection();
-    test_connection_blocker();
-    test_connection_blocking();
-    test_signal_blocking();
-    test_all_disconnection();
-    test_connection_copying_moving();
-    test_scoped_connection_moving();
-    test_signal_moving();
-    test_loop();
-    test_slot_count();
-    return 0;
+    REQUIRE(i1.val() == 1);
+    REQUIRE(i2.val() == 1);
 }

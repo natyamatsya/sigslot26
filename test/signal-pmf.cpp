@@ -1,5 +1,7 @@
+#include <catch2/catch_test_macros.hpp>
+#include <sigslot/signal.hpp>
+#include <print>
 #include <algorithm>
-#include <iostream>
 #include <memory>
 #include <string>
 #include <vector>
@@ -37,17 +39,17 @@ struct d : b1 {
 struct e : b1, c {
     static void sm() {}
     void m() {}
-    void vm() override{}
+    void vm() override {}
 };
 
-template <typename T>
+template<typename T>
 union sizer {
     T t;
     char data[sizeof(T)];
 };
 
-template <typename T>
-std::string ptr_string(const T&t) {
+template<typename T>
+std::string ptr_string(const T& t) {
     sizer<T> ss;
     std::uninitialized_fill(std::begin(ss.data), std::end(ss.data), '\0');
     ss.t = t;
@@ -61,7 +63,7 @@ std::string ptr_string(const T&t) {
     // shorten string
     while (addr.size() >= 2) {
         auto si = addr.size();
-        if (addr[si-1] == '0' && addr[si-2] == '0') {
+        if (addr[si - 1] == '0' && addr[si - 2] == '0') {
             addr.pop_back();
             addr.pop_back();
         } else {
@@ -71,14 +73,15 @@ std::string ptr_string(const T&t) {
     return addr;
 }
 
-template <typename T>
-std::string print(std::string name, const T&t) {
+template<typename T>
+std::string print(std::string name, const T& t) {
     auto addr = ptr_string(t);
-    std::cout << name << "\t" << sizeof(t) << "\t0x" << addr << std::endl;
+    std::println("{}\t{}\t0x{}", name, sizeof(t), addr);
     return addr;
 }
 
-int main(int, char **) {
+TEST_CASE("Pointer to member function sizes", "[signal_pmf]") {
+
     std::vector<std::string> addrs;
 
     addrs.push_back(print("fun", &fun));
@@ -97,7 +100,5 @@ int main(int, char **) {
 
     std::sort(addrs.begin(), addrs.end());
     auto last = std::unique(addrs.begin(), addrs.end());
-    std::cout << "Address duplicates: "
-              << std::distance(last, addrs.end()) << std::endl;
-    return 0;
+    std::println("Address duplicates: {}", std::distance(last, addrs.end()));
 }

@@ -1,9 +1,8 @@
 #include <sigslot/signal.hpp>
 
-#define ADAPT(func) \
-    [=](auto && ...a) { (func)(std::forward<decltype(a)>(a)...); }
+#define ADAPT(func) [=](auto&&... a) { (func)(std::forward<decltype(a)>(a)...); }
 
-void foo(int &i, int b = 1) {
+void foo(int& i, int b = 1) {
     i += b;
 }
 
@@ -23,4 +22,3 @@ int main() {
 
     return 0;
 }
-

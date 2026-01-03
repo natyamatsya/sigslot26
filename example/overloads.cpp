@@ -1,29 +1,29 @@
 #include <sigslot/signal.hpp>
 
-template <typename... Args, typename C>
+template<typename... Args, typename C>
 constexpr auto overload(void (C::*ptr)(Args...)) {
     return ptr;
 }
 
-template <typename... Args>
+template<typename... Args>
 constexpr auto overload(void (*ptr)(Args...)) {
     return ptr;
 }
 
 struct obj {
-    void operator()(int) const {}
+    void operator()(int /*unused*/) const {}
     void operator()() {}
 };
 
 struct foo {
-    void bar(int) {}
+    void bar(int /*unused*/) {}
     void bar() {}
 
-    static void baz(int) {}
+    static void baz(int /*unused*/) {}
     static void baz() {}
 };
 
-void moo(int) {}
+void moo(int /*unused*/) {}
 void moo() {}
 
 int main() {
@@ -40,4 +40,3 @@ int main() {
 
     return 0;
 }
-

@@ -1,19 +1,21 @@
-#include "test-common.h"
+
+#include <catch2/catch_test_macros.hpp>
+#include <catch2/matchers/catch_matchers.hpp>
 #include <sigslot/signal.hpp>
-#include <cassert>
 
-template <typename T>
+template<typename T>
 struct object {
-    object(T i) : v{i} {}
+    object(T i)
+        : v{i} {}
 
-    void inc_val(const T &i) {
+    void inc_val(const T& i) {
         if (i != v) {
             v++;
             sig(v);
         }
     }
 
-    void dec_val(const T &i) {
+    void dec_val(const T& i) {
         if (i != v) {
             v--;
             sig(v);
@@ -24,7 +26,7 @@ struct object {
     sigslot::signal<T> sig;
 };
 
-void test_recursive() {
+TEST_CASE("Recursive", "[recursive]") {
     object<int> i1(-1);
     object<int> i2(10);
 
@@ -33,28 +35,21 @@ void test_recursive() {
 
     i1.inc_val(0);
 
-    assert(i1.v == i2.v);
+    REQUIRE(i1.v == i2.v);
 }
 
-void test_self_recursive() {
+TEST_CASE("Self Recursive", "[recursive]") {
     int i = 0;
 
     sigslot::signal<int> s;
-    s.connect([&] (int v) {
+    s.connect([&](int v) {
         if (i < 10) {
             i++;
-            s(v+1);
+            s(v + 1);
         }
     });
 
     s(0);
 
-    assert(i == 10);
+    REQUIRE(i == 10);
 }
-
-int main() {
-    test_recursive();
-    test_self_recursive();
-    return 0;
-}
-

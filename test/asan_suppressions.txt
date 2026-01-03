@@ -1,0 +1,15 @@
+# AddressSanitizer suppressions for sigslot26 tests
+#
+# These suppress known false positives in Qt and glib internals.
+
+# Qt internal allocator races and memory issues
+leak:libQt6Core.so
+
+# glib event loop internals (used by Qt on Linux)
+leak:libglib-2.0.so
+
+# Known Qt internal issues
+race:libQt6Core.so
+
+# stdexec internal allocator issues (if any)
+leak:libstdc++.so

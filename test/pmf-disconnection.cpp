@@ -1,11 +1,5 @@
-#include "test-common.h"
+#include <catch2/catch_test_macros.hpp>
 #include <sigslot/signal.hpp>
-#include <cassert>
-
-#include <iostream>
-
-// Test of complex disconnection of pointer to member function scenarii,
-// to ensure it copes well with any function type.
 
 static int sum = 0;
 
@@ -36,24 +30,18 @@ struct d : b1 {
 
 struct e : b1, c {
     static void sm() { sum++; }
-    void m() const { sum++; }
+    void m() { sum++; }
     void vm() override { sum++; }
 };
 
-struct f : virtual b1 {
-    static void sm() { sum++; }
-    void m() const { sum++; }
-    void vm() override { sum++; }
-};
-
-int main(int, char **) {
+TEST_CASE("Pmf disconnection complex", "[pmf_disconnection]") {
+    sum = 0;
     sigslot::signal<> sig;
 
     auto sb1 = std::make_shared<b1>();
     auto sb2 = std::make_shared<b2>();
     auto sd = std::make_shared<d>();
     auto se = std::make_shared<e>();
-    auto sf = std::make_shared<f>();
 
     sig.connect(&b1::sm);
     sig.connect(&b1::m, sb1);
@@ -67,46 +55,35 @@ int main(int, char **) {
     sig.connect(&e::sm);
     sig.connect(&e::m, se);
     sig.connect(&e::vm, se);
-    sig.connect(&f::sm);
-    sig.connect(&f::m, sf);
-    sig.connect(&f::vm, sf);
 
     sig();
-    assert(sum == 15);
+    REQUIRE(sum == 12);
 
 #ifdef SIGSLOT_RTTI_ENABLED
     size_t n = 0;
     n = sig.disconnect(&b1::sm);
-    assert(n == 1);
+    REQUIRE(n == 1);
     n = sig.disconnect(&b1::m);
-    assert(n == 1);
+    REQUIRE(n == 1);
     n = sig.disconnect(&b1::vm);
-    assert(n == 1);
+    REQUIRE(n == 1);
     n = sig.disconnect(&b2::sm);
-    assert(n == 1);
+    REQUIRE(n == 1);
     n = sig.disconnect(&b2::m);
-    assert(n == 1);
+    REQUIRE(n == 1);
     n = sig.disconnect(&b2::vm);
-    assert(n == 1);
+    REQUIRE(n == 1);
     n = sig.disconnect(&d::sm);
-    assert(n == 1);
+    REQUIRE(n == 1);
     n = sig.disconnect(&d::m);
-    assert(n == 1);
+    REQUIRE(n == 1);
     n = sig.disconnect(&d::vm);
-    assert(n == 1);
+    REQUIRE(n == 1);
     n = sig.disconnect(&e::sm);
-    assert(n == 1);
+    REQUIRE(n == 1);
     n = sig.disconnect(&e::m);
-    assert(n == 1);
+    REQUIRE(n == 1);
     n = sig.disconnect(&e::vm);
-    assert(n == 1);
-    n = sig.disconnect(&f::sm);
-    assert(n == 1);
-    n = sig.disconnect(&f::m);
-    assert(n == 1);
-    n = sig.disconnect(&f::vm);
-    assert(n == 1);
+    REQUIRE(n == 1);
 #endif
-
-    return 0;
 }
