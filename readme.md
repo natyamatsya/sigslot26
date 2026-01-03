@@ -49,9 +49,8 @@ no use for them. If I can be convinced of otherwise I may change my mind later o
 ## Installation
 
 No compilation or installation is required, just include `sigslot/signal.hpp`
-and use it. Sigslot currently depends on a C++14 compliant compiler, but if need
-arises it may be retrofitted to C++11. It is known to work with Clang 4.0 and GCC
-5.0+ compilers on GNU Linux, MSVC 2017 and up, Clang-cl and MinGW on Windows.
+and use it. This fork requires a C++23 compliant compiler. It is tested with
+GCC 14, Clang 18, MSVC 2022, and Apple Clang on macOS.
 
 However, be aware of a potential gotcha on Windows with MSVC and Clang-Cl compilers,
 which may need the `/OPT:NOICF` linker flags in exceptional situations. Read The
@@ -99,8 +98,8 @@ include(FetchContent)
 
 FetchContent_Declare(
   sigslot
-  GIT_REPOSITORY https://github.com/palacaze/sigslot
-  GIT_TAG        19a6f0f5ea11fc121fe67f81fd5e491f2d7a4637 # v1.2.0
+  GIT_REPOSITORY https://github.com/natyamatsya/sigslot26
+  GIT_TAG        develop
 )
 FetchContent_MakeAvailable(sigslot)
 
