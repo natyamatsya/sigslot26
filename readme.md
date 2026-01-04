@@ -796,30 +796,50 @@ compilers.
 
 ### Performance Benchmarks
 
-#### Phase 1 & 2 Optimization Results (January 4, 2026)
+#### Phase 0, 1, 2 & 3 Optimization Results (January 4, 2026)
 
 **Note:** These are microbenchmarks measuring individual operations in isolation. Real-world performance may vary depending on usage patterns, system load, and compiler optimizations.
 
 **Test System:**
 - **CPU**: AMD Ryzen 9 7950X3D 16-Core Processor @ 4.2GHz (32 logical cores)
 - **OS**: Microsoft Windows 11 Pro (Build 26200)
-- **Compiler**: Microsoft C/C++ Optimizing Compiler Version 19.44.35222 for x64
+- **Compiler**: Microsoft C/C++ Optimizing Compiler Version 19.50.35721 for x64
 - **Build**: Release with LTO (/GL /LTCG), x64 target
 - **Memory**: 63.16 GB total
 
-| Benchmark | Baseline (ns) | Optimized (ns) | Improvement |
-|------------|----------------|-----------------|-------------|
-| Signal Construction | 30.1 | 63.4 | -111% (slower) |
-| Signal Destruction | 240 | 275 | -15% (slower) |
-| Connect Single Slot | 64.6 | 203 | -214% (slower) |
-| **Emission Single Slot** | **9.20** | **6.14** | **33% faster** |
-| **Emission Multiple Slots** | **17.6** | **14.1** | **20% faster** |
-| Slot Count | 9.04 | 6.20 | 31% faster |
+##### Single-Threaded Benchmarks
+
+| Benchmark | Phase 0 (ns) | Phase 2 (ns) | Phase 3 SBO (ns) | vs Baseline |
+|-----------|--------------|----------------|------------------|-------------|
+| Signal Construction | 30.1 | 63.4 | 63.5 | -111% |
+| Signal Destruction | 240 | 275 | 308 | -28% |
+| Connect Single Slot | 64.6 | 203 | 160 | -148% |
+| **Emission Single Slot** | **9.20** | **6.14** | **6.01** | **35% faster** |
+| **Emission Multiple Slots** | **17.6** | **14.1** | **14.2** | **19% faster** |
+| Slot Count | 9.04 | 6.20 | 6.25 | 31% faster |
+
+##### Multi-Threaded Benchmarks
+
+| Benchmark | Phase 0 (ns) | Phase 2 (ns) | Phase 3 SBO (ns) | vs Baseline |
+|-----------|--------------|--------------|------------------|-------------|
+| Thread-Safe Construction | 1.14 | 1.13 | 1.18 | ~same |
+| **Thread-Safe Emission** | **5.32** | **5.08** | **5.18** | **3% faster** |
+| Concurrent Emission (1 thread) | 61,006 | 63,095 | 59,921 | 2% faster |
+| Concurrent Emission (2 threads) | 87,692 | 89,734 | 88,113 | ~same |
+| Concurrent Emission (4 threads) | 147,187 | 149,534 | 149,939 | ~same |
+| Concurrent Connect (1 thread) | 49,416 | 50,539 | 55,558 | -12% |
+| Concurrent Connect (2 threads) | 84,034 | 86,014 | 88,539 | -5% |
+| Concurrent Connect (4 threads) | ~140,000 | 143,071 | 143,528 | ~same |
 
 **Key Findings:**
-- ✅ **Major wins**: Emission latency improved 20-33% (the hot path)
-- ⚠️ **Trade-offs**: Construction/connect slower due to cache alignment and RCU overhead
-- 📊 **Overall**: Optimizations successfully improve the most frequent operation
+- ✅ **Phase 3 SBO**: Small Buffer Optimization for up to 3 slots per group
+- ✅ **Major wins**: Emission latency improved 19-35% vs baseline (the hot path)
+- ✅ **Connect improved**: 21% faster than Phase 2 due to SBO stack allocation
+- ✅ **Thread-safe emission**: 3% faster with lock-free RCU + SBO
+- ⚠️ **Trade-offs**: Construction/destruction slower due to cache alignment and RCU overhead
+- 📊 **Overall**: SBO successfully avoids heap allocation for common use cases
+
+**Archived Results:** `benchmark/archive/phase*_*.json`
 
 **Running Benchmarks:**
 ```bash
