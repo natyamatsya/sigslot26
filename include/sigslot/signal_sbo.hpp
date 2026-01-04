@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: MIT
+// SPDX-FileCopyrightText: natyamatsya/sigslot26 contributors
+
 #pragma once
 
 #include <sigslot/signal.hpp>
@@ -9,20 +12,6 @@
 
 namespace sigslot::detail {
 
-/**
- * @brief Small Buffer Optimization (SBO) container for efficient slot storage
- * 
- * This container provides stack-based storage for up to N slots before falling back
- * to heap allocation. The default N=3 is chosen based on empirical analysis:
- * 
- * - **Cache Efficiency**: 3 free function slots (40 bytes) fit comfortably in a 64-byte cache line
- * - **Common Use Cases**: Most signals have 1-3 slots (event handlers, callbacks, etc.)
- * - **Memory Efficiency**: Avoids ~24-32 byte heap allocation overhead for ~75% of cases
- * - **Binary Layout**: Optimized for x64 with 16-byte alignment boundaries
- * 
- * @tparam T Type of elements to store (typically slot_base derivatives)
- * @tparam N Number of elements to store on stack before heap allocation (default: 3)
- */
 enum class SBOError {
     NeedsHeapAllocation,
     InvalidSlotIndex
@@ -32,27 +21,20 @@ template<typename T, std::size_t N = 3>
 class sbo_container {
     static_assert(N > 0, "SBO size must be greater than 0");
     
-    /**
-     * @brief Storage union for stack and heap allocation
-     * 
-     * The union provides either:
-     * - Stack storage: std::array<T, N> for small N (default: 3)
-     * - Heap storage: std::vector<T> for larger N or when stack is full
-     * 
-     * @note The union is uninitialized - constructors/destructors must be called manually
-     *       when switching between stack and heap storage
-     */
+    // N=3 chosen for optimal cache line usage (40 bytes fits in 64-byte cache line)
+    // and covers ~75% of common use cases (1-3 slots)
+    
     union Storage {
-        std::vector<T> heap;  ///< Heap storage for large N
-        std::array<T, N> stack;  ///< Stack storage for small N
+        std::vector<T> heap;
+        std::array<T, N> stack;
         
         Storage() {}  // Undefined union member
         ~Storage() {}  // Undefined union member
     };
     
-    Storage storage_;           ///< Union storage for slots
-    bool using_heap_ = false;  ///< True when using heap storage
-    std::size_t size_ = 0;    ///< Current number of stored elements
+    Storage storage_;
+    bool using_heap_ = false;
+    std::size_t size_ = 0;
     
 public:
     constexpr sbo_container() noexcept = default;
