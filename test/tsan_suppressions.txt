@@ -10,3 +10,12 @@ race:libQt6Core.so
 
 # glib event loop internals (used by Qt on Linux)
 race:libglib-2.0.so
+
+# Dual-counter intrusive_ptr: accessing atomic weak count during object destruction
+# This is benign because:
+# 1. We only access m_weak (std::atomic) which has trivial destructor
+# 2. Memory stays valid until weak count reaches 0 (do_destroy_weak)
+# 3. This is expected weak reference semantics (like std::weak_ptr control block)
+# Pattern must match: sigslot::detail::intrusive_weak_ptr<...>::release_weak()
+race:*intrusive_weak_ptr*release_weak*
+race:*intrusive_refcount*release_weak_ref*

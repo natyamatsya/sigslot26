@@ -260,6 +260,11 @@ class intrusive_weak_ptr {
         }
     }
     
+    // Note: TSan (GCC) reports a race when release_weak_ref() is called while
+    // the pointed-to object's destructor is running on another thread. This is
+    // benign because we only access m_weak (atomic with trivial destructor) and
+    // memory stays valid until weak count reaches 0. Same semantics as
+    // std::weak_ptr control block. Suppressed in test/tsan_suppressions.txt.
     void release_weak() noexcept {
         if (ptr_) {
             ptr_->release_weak_ref();
