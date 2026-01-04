@@ -165,8 +165,8 @@ jobs:
             # GCC: Use both ThreadSanitizer and UBSan
             cmake $GITHUB_WORKSPACE -DCMAKE_BUILD_TYPE=$BUILD_TYPE -DSIGSLOT_SANITIZE_THREAD=ON -DSIGSLOT_SANITIZE_UNDEFINED=ON $FETCH_FLAG $REPEAT_FLAG $INTRUSIVE_FLAG -G Ninja -Wno-dev
           elif [[ "${{ matrix.config.name }}" == "Ubuntu clang" ]]; then
-            # Clang with libc++ for full C++23 support (std::expected)
-            cmake $GITHUB_WORKSPACE -DCMAKE_BUILD_TYPE=$BUILD_TYPE -DCMAKE_CXX_FLAGS="-stdlib=libc++" -DSIGSLOT_SANITIZE_THREAD=ON $FETCH_FLAG $REPEAT_FLAG $INTRUSIVE_FLAG -G Ninja -Wno-dev
+            # Clang-20 with libstdc++ (Qt is built with libstdc++, libc++ causes ABI mismatch)
+            cmake $GITHUB_WORKSPACE -DCMAKE_BUILD_TYPE=$BUILD_TYPE -DSIGSLOT_SANITIZE_THREAD=ON $FETCH_FLAG $REPEAT_FLAG $INTRUSIVE_FLAG -G Ninja -Wno-dev
           elif [[ "${{ matrix.config.name }}" == "MacOS apple-clang" ]]; then
             # Clang: Use only ThreadSanitizer (UBSan+TSan causes stdexec hangs)
             cmake $GITHUB_WORKSPACE -DCMAKE_BUILD_TYPE=$BUILD_TYPE -DSIGSLOT_SANITIZE_THREAD=ON $FETCH_FLAG $REPEAT_FLAG $INTRUSIVE_FLAG -G Ninja -Wno-dev

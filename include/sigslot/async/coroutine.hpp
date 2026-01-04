@@ -219,8 +219,12 @@ public:
             result_ = std::make_tuple(std::forward<decltype(args)>(args)...);
             conn_.disconnect();
 
-            if (continuation_)
-                continuation_.resume();
+            // Save continuation locally before resuming - after resume(),
+            // 'this' may be destroyed (use-after-free)
+            auto cont = continuation_;
+            continuation_ = nullptr;
+            if (cont)
+                cont.resume();
         });
     }
 

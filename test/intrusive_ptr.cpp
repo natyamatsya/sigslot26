@@ -16,7 +16,7 @@ public:
     static int constructed;
     static int destructed;
     
-    int value;
+    std::atomic<int> value;  // Atomic for thread-safety tests
     
     explicit TestObject(int v = 0) : value(v) {
         ++constructed;
@@ -407,7 +407,7 @@ TEST_CASE("intrusive_ptr thread safety", "[intrusive_ptr][threading]") {
         
         for (int i = 0; i < OPS_PER_THREAD; ++i) {
             intrusive_ptr<TestObject> local = shared;
-            local->value++; // Not atomic, but tests refcount
+            local->value.fetch_add(1, std::memory_order_relaxed); // Atomic increment
         }
     };
     
