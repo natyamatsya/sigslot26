@@ -22,7 +22,7 @@ static void BM_SignalDestruction(benchmark::State& state) {
 static void BM_ConnectSingleSlot(benchmark::State& state) {
     sigslot::signal<int> sig;
     auto slot = [](int) {};
-    
+
     for (auto _ : state) {
         sig.connect(slot);
         sig.disconnect_all();
@@ -32,7 +32,7 @@ static void BM_ConnectSingleSlot(benchmark::State& state) {
 static void BM_EmissionSingleSlot(benchmark::State& state) {
     sigslot::signal<int> sig;
     sig.connect([](int) {});
-    
+
     for (auto _ : state) {
         sig(42);
     }
@@ -40,12 +40,12 @@ static void BM_EmissionSingleSlot(benchmark::State& state) {
 
 static void BM_EmissionMultipleSlots(benchmark::State& state) {
     sigslot::signal<int> sig;
-    
+
     // Connect multiple slots
     for (int i = 0; i < 10; ++i) {
         sig.connect([i](int) {});
     }
-    
+
     for (auto _ : state) {
         sig(42);
     }
@@ -53,12 +53,12 @@ static void BM_EmissionMultipleSlots(benchmark::State& state) {
 
 static void BM_SlotCount(benchmark::State& state) {
     sigslot::signal<int> sig;
-    
+
     // Connect multiple slots
     for (int i = 0; i < 10; ++i) {
         sig.connect([i](int) {});
     }
-    
+
     for (auto _ : state) {
         auto count = sig.slot_count();
         benchmark::DoNotOptimize(count);
@@ -69,7 +69,7 @@ static void BM_SlotCount(benchmark::State& state) {
 static void BM_EmissionBatch100(benchmark::State& state) {
     sigslot::signal<int> sig;
     sig.connect([](int) {});
-    
+
     for (auto _ : state) {
         auto batch = sig.batch();
         for (int i = 0; i < 100; ++i) {
@@ -82,7 +82,7 @@ static void BM_EmissionBatch100(benchmark::State& state) {
 static void BM_EmissionRegular100(benchmark::State& state) {
     sigslot::signal<int> sig;
     sig.connect([](int) {});
-    
+
     for (auto _ : state) {
         for (int i = 0; i < 100; ++i) {
             sig(i);
@@ -94,7 +94,7 @@ static void BM_EmissionRegular100(benchmark::State& state) {
 static void BM_EmissionBatch1000(benchmark::State& state) {
     sigslot::signal<int> sig;
     sig.connect([](int) {});
-    
+
     for (auto _ : state) {
         auto batch = sig.batch();
         for (int i = 0; i < 1000; ++i) {
@@ -107,7 +107,7 @@ static void BM_EmissionBatch1000(benchmark::State& state) {
 static void BM_EmissionRegular1000(benchmark::State& state) {
     sigslot::signal<int> sig;
     sig.connect([](int) {});
-    
+
     for (auto _ : state) {
         for (int i = 0; i < 1000; ++i) {
             sig(i);
@@ -118,14 +118,16 @@ static void BM_EmissionRegular1000(benchmark::State& state) {
 
 // Prevent devirtualization by using volatile function pointer
 static volatile int g_sink = 0;
-static void noinline_slot(int x) { g_sink = x; }
+static void noinline_slot(int x) {
+    g_sink = x;
+}
 
 // Use std::function to prevent compile-time type resolution
 static void BM_EmissionStdFunction(benchmark::State& state) {
     sigslot::signal<int> sig;
     std::function<void(int)> fn = [](int x) { benchmark::DoNotOptimize(x); };
     sig.connect(fn);
-    
+
     for (auto _ : state) {
         sig(42);
     }
@@ -134,9 +136,9 @@ static void BM_EmissionStdFunction(benchmark::State& state) {
 // Use function pointer (type-erased) to prevent devirtualization
 static void BM_EmissionFunctionPtr(benchmark::State& state) {
     sigslot::signal<int> sig;
-    void (*volatile fp)(int) = noinline_slot;  // volatile prevents optimization
+    void (*volatile fp)(int) = noinline_slot; // volatile prevents optimization
     sig.connect(fp);
-    
+
     for (auto _ : state) {
         sig(42);
     }
@@ -145,13 +147,13 @@ static void BM_EmissionFunctionPtr(benchmark::State& state) {
 // Multiple mixed slot types to stress the dispatch mechanism
 static void BM_EmissionMixedTypes(benchmark::State& state) {
     sigslot::signal<int> sig;
-    
+
     // Mix of different slot types
-    sig.connect([](int x) { benchmark::DoNotOptimize(x); });  // lambda
-    sig.connect(noinline_slot);  // function pointer
+    sig.connect([](int x) { benchmark::DoNotOptimize(x); }); // lambda
+    sig.connect(noinline_slot);                              // function pointer
     std::function<void(int)> fn = [](int x) { benchmark::DoNotOptimize(x); };
-    sig.connect(fn);  // std::function
-    
+    sig.connect(fn); // std::function
+
     for (auto _ : state) {
         sig(42);
     }

@@ -29,13 +29,13 @@
 namespace sigslot::rx {
 
 // Forward declarations
-template <typename Source, typename F>
+template<typename Source, typename F>
 class mapped_signal;
 
-template <typename Source, typename Pred>
+template<typename Source, typename Pred>
 class filtered_signal;
 
-template <typename Source>
+template<typename Source>
 class debounced_signal;
 
 namespace detail {
@@ -43,29 +43,29 @@ namespace detail {
 /**
  * @brief Type trait to extract signal argument types
  */
-template <typename T>
+template<typename T>
 struct signal_traits;
 
-template <typename... Args>
+template<typename... Args>
 struct signal_traits<signal<Args...>> {
     using signal_type = signal<Args...>;
-    template <typename F>
+    template<typename F>
     using mapped_result = std::invoke_result_t<F, Args...>;
 };
 
-template <typename Source, typename F>
+template<typename Source, typename F>
 struct signal_traits<mapped_signal<Source, F>> {
     using source_traits = signal_traits<Source>;
     using result = typename source_traits::template mapped_result<F>;
     using signal_type = signal<result>;
-    template <typename G>
+    template<typename G>
     using mapped_result = std::invoke_result_t<G, result>;
 };
 
-template <typename Source, typename Pred>
+template<typename Source, typename Pred>
 struct signal_traits<filtered_signal<Source, Pred>> : signal_traits<Source> {};
 
-template <typename Source>
+template<typename Source>
 struct signal_traits<debounced_signal<Source>> : signal_traits<Source> {};
 
 } // namespace detail
@@ -73,7 +73,7 @@ struct signal_traits<debounced_signal<Source>> : signal_traits<Source> {};
 /**
  * @brief A signal wrapper that transforms emitted values
  */
-template <typename Source, typename F>
+template<typename Source, typename F>
 class mapped_signal {
 public:
     using source_type = Source;
@@ -106,7 +106,7 @@ public:
     /**
      * @brief Connect a slot to receive transformed values
      */
-    template <typename... SlotArgs>
+    template<typename... SlotArgs>
     connection connect(SlotArgs&&... args) {
         ensure_connected();
         return output_.connect(std::forward<SlotArgs>(args)...);
@@ -133,7 +133,7 @@ private:
 /**
  * @brief A signal wrapper that filters emissions based on a predicate
  */
-template <typename Source, typename Pred>
+template<typename Source, typename Pred>
 class filtered_signal {
 public:
     using source_type = Source;
@@ -147,7 +147,7 @@ private:
     mutable std::optional<scoped_connection> conn_;
 
     // Helper to get the actual signal type from source
-    template <typename S>
+    template<typename S>
     static auto& get_connectable(S& s) {
         if constexpr (requires { s.output(); }) {
             return s.output();
@@ -176,7 +176,7 @@ public:
     /**
      * @brief Connect a slot to receive filtered values
      */
-    template <typename... SlotArgs>
+    template<typename... SlotArgs>
     connection connect(SlotArgs&&... args) {
         ensure_connected();
         return output_.connect(std::forward<SlotArgs>(args)...);
@@ -208,7 +208,7 @@ private:
  *
  * Only emits a value after no new values have arrived for the specified duration.
  */
-template <typename Source>
+template<typename Source>
 class debounced_signal {
 public:
     using source_type = Source;
@@ -230,7 +230,7 @@ private:
     mutable signal<> output_; // Simplified for now - void signal
     mutable std::optional<scoped_connection> conn_;
 
-    template <typename S>
+    template<typename S>
     static auto& get_connectable(S& s) {
         if constexpr (requires { s.output(); }) {
             return s.output();
@@ -268,7 +268,7 @@ public:
     /**
      * @brief Connect a slot to receive debounced emissions
      */
-    template <typename... SlotArgs>
+    template<typename... SlotArgs>
     connection connect(SlotArgs&&... args) {
         ensure_connected();
         return output_.connect(std::forward<SlotArgs>(args)...);
@@ -327,11 +327,11 @@ private:
 /**
  * @brief Factory for map operator
  */
-template <typename F>
+template<typename F>
 struct map_op {
     F transform;
 
-    template <typename Source>
+    template<typename Source>
     auto operator()(Source& source) const {
         return mapped_signal<Source, F>(source, transform);
     }
@@ -340,11 +340,11 @@ struct map_op {
 /**
  * @brief Factory for filter operator
  */
-template <typename Pred>
+template<typename Pred>
 struct filter_op {
     Pred predicate;
 
-    template <typename Source>
+    template<typename Source>
     auto operator()(Source& source) const {
         return filtered_signal<Source, Pred>(source, predicate);
     }
@@ -356,7 +356,7 @@ struct filter_op {
 struct debounce_op {
     std::chrono::milliseconds delay;
 
-    template <typename Source>
+    template<typename Source>
     auto operator()(Source& source) const {
         return debounced_signal<Source>(source, delay);
     }
@@ -367,7 +367,7 @@ struct debounce_op {
  *
  * Emits the first value, then ignores subsequent values for the specified duration.
  */
-template <typename Source>
+template<typename Source>
 class throttled_signal {
 public:
     using source_type = Source;
@@ -383,7 +383,7 @@ private:
     mutable std::mutex mtx_;
     mutable clock_type::time_point last_emission_{};
 
-    template <typename S>
+    template<typename S>
     static auto& get_connectable(S& s) {
         if constexpr (requires { s.output(); }) {
             return s.output();
@@ -409,7 +409,7 @@ public:
     throttled_signal(const throttled_signal&) = delete;
     throttled_signal& operator=(const throttled_signal&) = delete;
 
-    template <typename... SlotArgs>
+    template<typename... SlotArgs>
     connection connect(SlotArgs&&... args) {
         ensure_connected();
         return output_.connect(std::forward<SlotArgs>(args)...);
@@ -439,7 +439,7 @@ private:
 /**
  * @brief A signal wrapper that only emits when value changes
  */
-template <typename Source>
+template<typename Source>
 class distinct_signal {
 public:
     using source_type = Source;
@@ -452,7 +452,7 @@ private:
     mutable std::mutex mtx_;
     mutable std::optional<std::tuple<>> last_value_; // Placeholder
 
-    template <typename S>
+    template<typename S>
     static auto& get_connectable(S& s) {
         if constexpr (requires { s.output(); }) {
             return s.output();
@@ -476,7 +476,7 @@ public:
     distinct_signal(const distinct_signal&) = delete;
     distinct_signal& operator=(const distinct_signal&) = delete;
 
-    template <typename... SlotArgs>
+    template<typename... SlotArgs>
     connection connect(SlotArgs&&... args) {
         ensure_connected();
         return output_.connect(std::forward<SlotArgs>(args)...);
@@ -495,7 +495,7 @@ private:
                 std::lock_guard lock(mtx_);
                 auto current = std::make_tuple(args...);
                 using tuple_type = decltype(current);
-                
+
                 auto* last = reinterpret_cast<std::optional<tuple_type>*>(&last_value_);
                 if (!last->has_value() || *last != current) {
                     *last = current;
@@ -509,7 +509,7 @@ private:
 /**
  * @brief A signal wrapper that only emits when predicate says values differ
  */
-template <typename Source, typename Pred>
+template<typename Source, typename Pred>
 class distinct_until_changed_signal {
 public:
     using source_type = Source;
@@ -524,7 +524,7 @@ private:
     mutable std::mutex mtx_;
     mutable std::optional<std::tuple<>> last_value_;
 
-    template <typename S>
+    template<typename S>
     static auto& get_connectable(S& s) {
         if constexpr (requires { s.output(); }) {
             return s.output();
@@ -550,7 +550,7 @@ public:
     distinct_until_changed_signal(const distinct_until_changed_signal&) = delete;
     distinct_until_changed_signal& operator=(const distinct_until_changed_signal&) = delete;
 
-    template <typename... SlotArgs>
+    template<typename... SlotArgs>
     connection connect(SlotArgs&&... args) {
         ensure_connected();
         return output_.connect(std::forward<SlotArgs>(args)...);
@@ -565,18 +565,22 @@ private:
     void ensure_connected() const {
         if (!conn_) {
             auto& connectable = get_connectable(*source_);
-            
+
             conn_.emplace(connectable.connect([this](auto&&... args) {
                 std::lock_guard lock(mtx_);
                 auto current = std::make_tuple(args...);
                 using tuple_type = decltype(current);
-                
+
                 auto* last = reinterpret_cast<std::optional<tuple_type>*>(&last_value_);
-                if (!last->has_value() || !std::apply([this, &current](auto&&... prev) {
-                    return std::apply([this, &prev...](auto&&... curr) {
-                        return predicate_(prev..., curr...);
-                    }, current);
-                }, *last)) {
+                if (!last->has_value() || !std::apply(
+                                              [this, &current](auto&&... prev) {
+                                                  return std::apply(
+                                                      [this, &prev...](auto&&... curr) {
+                                                          return predicate_(prev..., curr...);
+                                                      },
+                                                      current);
+                                              },
+                                              *last)) {
                     *last = current;
                     output_(std::forward<decltype(args)>(args)...);
                 }
@@ -591,7 +595,7 @@ private:
 struct throttle_op {
     std::chrono::milliseconds interval;
 
-    template <typename Source>
+    template<typename Source>
     auto operator()(Source& source) const {
         return throttled_signal<Source>(source, interval);
     }
@@ -601,7 +605,7 @@ struct throttle_op {
  * @brief Factory for distinct operator
  */
 struct distinct_op {
-    template <typename Source>
+    template<typename Source>
     auto operator()(Source& source) const {
         return distinct_signal<Source>(source);
     }
@@ -610,11 +614,11 @@ struct distinct_op {
 /**
  * @brief Factory for distinct_until_changed operator
  */
-template <typename Pred>
+template<typename Pred>
 struct distinct_until_changed_op {
     Pred predicate;
 
-    template <typename Source>
+    template<typename Source>
     auto operator()(Source& source) const {
         return distinct_until_changed_signal<Source, Pred>(source, predicate);
     }
@@ -627,7 +631,7 @@ struct distinct_until_changed_op {
 /**
  * @brief A signal wrapper that computes a running accumulation
  */
-template <typename Source, typename T, typename F>
+template<typename Source, typename T, typename F>
 class scanned_signal {
 public:
     using source_type = Source;
@@ -643,7 +647,7 @@ private:
     mutable std::mutex mtx_;
     mutable T acc_;
 
-    template <typename S>
+    template<typename S>
     static auto& get_connectable(S& s) {
         if constexpr (requires { s.output(); }) {
             return s.output();
@@ -673,7 +677,7 @@ public:
     scanned_signal(const scanned_signal&) = delete;
     scanned_signal& operator=(const scanned_signal&) = delete;
 
-    template <typename... SlotArgs>
+    template<typename... SlotArgs>
     connection connect(SlotArgs&&... args) {
         ensure_connected();
         return output_.connect(std::forward<SlotArgs>(args)...);
@@ -700,7 +704,7 @@ private:
 /**
  * @brief A signal wrapper that buffers N emissions then emits as vector
  */
-template <typename Source, typename T>
+template<typename Source, typename T>
 class buffered_signal {
 public:
     using source_type = Source;
@@ -714,7 +718,7 @@ private:
     mutable std::mutex mtx_;
     mutable std::vector<T> buffer_;
 
-    template <typename S>
+    template<typename S>
     static auto& get_connectable(S& s) {
         if constexpr (requires { s.output(); }) {
             return s.output();
@@ -743,7 +747,7 @@ public:
     buffered_signal(const buffered_signal&) = delete;
     buffered_signal& operator=(const buffered_signal&) = delete;
 
-    template <typename... SlotArgs>
+    template<typename... SlotArgs>
     connection connect(SlotArgs&&... args) {
         ensure_connected();
         return output_.connect(std::forward<SlotArgs>(args)...);
@@ -774,7 +778,7 @@ private:
 /**
  * @brief A signal wrapper that only forwards first N emissions
  */
-template <typename Source>
+template<typename Source>
 class take_signal {
 public:
     using source_type = Source;
@@ -788,7 +792,7 @@ private:
     mutable std::mutex mtx_;
     mutable std::size_t remaining_;
 
-    template <typename S>
+    template<typename S>
     static auto& get_connectable(S& s) {
         if constexpr (requires { s.output(); }) {
             return s.output();
@@ -816,7 +820,7 @@ public:
     take_signal(const take_signal&) = delete;
     take_signal& operator=(const take_signal&) = delete;
 
-    template <typename... SlotArgs>
+    template<typename... SlotArgs>
     connection connect(SlotArgs&&... args) {
         ensure_connected();
         return output_.connect(std::forward<SlotArgs>(args)...);
@@ -848,7 +852,7 @@ private:
 /**
  * @brief A signal wrapper that skips first N emissions
  */
-template <typename Source>
+template<typename Source>
 class skip_signal {
 public:
     using source_type = Source;
@@ -862,7 +866,7 @@ private:
     mutable std::mutex mtx_;
     mutable std::size_t remaining_;
 
-    template <typename S>
+    template<typename S>
     static auto& get_connectable(S& s) {
         if constexpr (requires { s.output(); }) {
             return s.output();
@@ -890,7 +894,7 @@ public:
     skip_signal(const skip_signal&) = delete;
     skip_signal& operator=(const skip_signal&) = delete;
 
-    template <typename... SlotArgs>
+    template<typename... SlotArgs>
     connection connect(SlotArgs&&... args) {
         ensure_connected();
         return output_.connect(std::forward<SlotArgs>(args)...);
@@ -920,7 +924,7 @@ private:
 /**
  * @brief A signal wrapper that forwards while predicate is true
  */
-template <typename Source, typename Pred>
+template<typename Source, typename Pred>
 class take_while_signal {
 public:
     using source_type = Source;
@@ -935,7 +939,7 @@ private:
     mutable std::mutex mtx_;
     mutable bool stopped_ = false;
 
-    template <typename S>
+    template<typename S>
     static auto& get_connectable(S& s) {
         if constexpr (requires { s.output(); }) {
             return s.output();
@@ -962,7 +966,7 @@ public:
     take_while_signal(const take_while_signal&) = delete;
     take_while_signal& operator=(const take_while_signal&) = delete;
 
-    template <typename... SlotArgs>
+    template<typename... SlotArgs>
     connection connect(SlotArgs&&... args) {
         ensure_connected();
         return output_.connect(std::forward<SlotArgs>(args)...);
@@ -992,22 +996,22 @@ private:
 
 // Operator factories for Phase 2
 
-template <typename T, typename F>
+template<typename T, typename F>
 struct scan_op {
     T init;
     F func;
 
-    template <typename Source>
+    template<typename Source>
     auto operator()(Source& source) const {
         return scanned_signal<Source, T, F>(source, init, func);
     }
 };
 
-template <typename T>
+template<typename T>
 struct buffer_op {
     std::size_t count;
 
-    template <typename Source>
+    template<typename Source>
     auto operator()(Source& source) const {
         return buffered_signal<Source, T>(source, count);
     }
@@ -1016,7 +1020,7 @@ struct buffer_op {
 struct take_op {
     std::size_t count;
 
-    template <typename Source>
+    template<typename Source>
     auto operator()(Source& source) const {
         return take_signal<Source>(source, count);
     }
@@ -1025,17 +1029,17 @@ struct take_op {
 struct skip_op {
     std::size_t count;
 
-    template <typename Source>
+    template<typename Source>
     auto operator()(Source& source) const {
         return skip_signal<Source>(source, count);
     }
 };
 
-template <typename Pred>
+template<typename Pred>
 struct take_while_op {
     Pred predicate;
 
-    template <typename Source>
+    template<typename Source>
     auto operator()(Source& source) const {
         return take_while_signal<Source, Pred>(source, predicate);
     }
@@ -1048,11 +1052,11 @@ struct take_while_op {
 // Note: merged_signal for heterogeneous signals removed - use merged_typed_signal instead
 
 // Forward declaration
-template <typename T>
+template<typename T>
 class merged_typed_signal;
 
 // Signal traits for merged_typed_signal
-template <typename T>
+template<typename T>
 struct detail::signal_traits<merged_typed_signal<T>> {
     using signal_type = signal<T>;
     using tuple_type = std::tuple<T>;
@@ -1061,7 +1065,7 @@ struct detail::signal_traits<merged_typed_signal<T>> {
 /**
  * @brief A signal that merges emissions from signals with same arg type
  */
-template <typename T>
+template<typename T>
 class merged_typed_signal {
 public:
     using value_type = T;
@@ -1072,7 +1076,7 @@ private:
     mutable std::vector<scoped_connection> conns_;
 
 public:
-    template <typename... Sources>
+    template<typename... Sources>
     explicit merged_typed_signal(Sources&... sources)
         : sources_{&sources...} {}
 
@@ -1081,7 +1085,7 @@ public:
     merged_typed_signal(const merged_typed_signal&) = delete;
     merged_typed_signal& operator=(const merged_typed_signal&) = delete;
 
-    template <typename... SlotArgs>
+    template<typename... SlotArgs>
     connection connect(SlotArgs&&... args) {
         ensure_connected();
         return output_.connect(std::forward<SlotArgs>(args)...);
@@ -1096,9 +1100,7 @@ private:
     void ensure_connected() const {
         if (conns_.empty()) {
             for (auto* src : sources_) {
-                conns_.emplace_back(src->connect([this](T value) {
-                    output_(std::move(value));
-                }));
+                conns_.emplace_back(src->connect([this](T value) { output_(std::move(value)); }));
             }
         }
     }
@@ -1107,7 +1109,7 @@ private:
 /**
  * @brief A signal that combines latest values from two signals
  */
-template <typename Sig1, typename Sig2, typename T1, typename T2>
+template<typename Sig1, typename Sig2, typename T1, typename T2>
 class combined_signal {
 public:
     using output_type = std::tuple<T1, T2>;
@@ -1132,7 +1134,7 @@ public:
     combined_signal(const combined_signal&) = delete;
     combined_signal& operator=(const combined_signal&) = delete;
 
-    template <typename... SlotArgs>
+    template<typename... SlotArgs>
     connection connect(SlotArgs&&... args) {
         ensure_connected();
         return output_.connect(std::forward<SlotArgs>(args)...);
@@ -1169,7 +1171,7 @@ private:
 /**
  * @brief A signal that zips emissions from two signals 1:1
  */
-template <typename Sig1, typename Sig2, typename T1, typename T2>
+template<typename Sig1, typename Sig2, typename T1, typename T2>
 class zipped_signal {
 public:
     using output_type = std::tuple<T1, T2>;
@@ -1194,7 +1196,7 @@ public:
     zipped_signal(const zipped_signal&) = delete;
     zipped_signal& operator=(const zipped_signal&) = delete;
 
-    template <typename... SlotArgs>
+    template<typename... SlotArgs>
     connection connect(SlotArgs&&... args) {
         ensure_connected();
         return output_.connect(std::forward<SlotArgs>(args)...);
@@ -1245,7 +1247,7 @@ private:
  * Example:
  *   auto doubled = sig | rx::map([](int x) { return x * 2; });
  */
-template <typename F>
+template<typename F>
 auto map(F&& transform) {
     return map_op<std::decay_t<F>>{std::forward<F>(transform)};
 }
@@ -1259,7 +1261,7 @@ auto map(F&& transform) {
  * Example:
  *   auto positive = sig | rx::filter([](int x) { return x > 0; });
  */
-template <typename Pred>
+template<typename Pred>
 auto filter(Pred&& predicate) {
     return filter_op<std::decay_t<Pred>>{std::forward<Pred>(predicate)};
 }
@@ -1319,7 +1321,7 @@ inline auto distinct() {
  *       return a.id == b.id; 
  *   });
  */
-template <typename Pred>
+template<typename Pred>
 auto distinct_until_changed(Pred&& predicate) {
     return distinct_until_changed_op<std::decay_t<Pred>>{std::forward<Pred>(predicate)};
 }
@@ -1334,10 +1336,9 @@ auto distinct_until_changed(Pred&& predicate) {
  * Example:
  *   auto running_sum = sig | rx::scan(0, [](int acc, int x) { return acc + x; });
  */
-template <typename T, typename F>
+template<typename T, typename F>
 auto scan(T&& init, F&& func) {
-    return scan_op<std::decay_t<T>, std::decay_t<F>>{
-        std::forward<T>(init), std::forward<F>(func)};
+    return scan_op<std::decay_t<T>, std::decay_t<F>>{std::forward<T>(init), std::forward<F>(func)};
 }
 
 /**
@@ -1350,7 +1351,7 @@ auto scan(T&& init, F&& func) {
  * Example:
  *   auto batched = sig | rx::buffer<int>(3);
  */
-template <typename T>
+template<typename T>
 auto buffer(std::size_t count) {
     return buffer_op<T>{count};
 }
@@ -1390,7 +1391,7 @@ inline auto skip(std::size_t count) {
  * Example:
  *   auto while_positive = sig | rx::take_while([](int x) { return x > 0; });
  */
-template <typename Pred>
+template<typename Pred>
 auto take_while(Pred&& predicate) {
     return take_while_op<std::decay_t<Pred>>{std::forward<Pred>(predicate)};
 }
@@ -1404,7 +1405,7 @@ auto take_while(Pred&& predicate) {
  * Example:
  *   auto merged = rx::merge(sig1, sig2, sig3);
  */
-template <typename T, typename... Sources>
+template<typename T, typename... Sources>
 auto merge(Sources&... sources) {
     return merged_typed_signal<T>(sources...);
 }
@@ -1421,7 +1422,7 @@ auto merge(Sources&... sources) {
  * Example:
  *   auto combined = rx::combine_latest<int, std::string>(sig1, sig2);
  */
-template <typename T1, typename T2, typename Sig1, typename Sig2>
+template<typename T1, typename T2, typename Sig1, typename Sig2>
 auto combine_latest(Sig1& sig1, Sig2& sig2) {
     return combined_signal<Sig1, Sig2, T1, T2>(sig1, sig2);
 }
@@ -1438,7 +1439,7 @@ auto combine_latest(Sig1& sig1, Sig2& sig2) {
  * Example:
  *   auto zipped = rx::zip<int, std::string>(sig1, sig2);
  */
-template <typename T1, typename T2, typename Sig1, typename Sig2>
+template<typename T1, typename T2, typename Sig1, typename Sig2>
 auto zip(Sig1& sig1, Sig2& sig2) {
     return zipped_signal<Sig1, Sig2, T1, T2>(sig1, sig2);
 }
@@ -1450,7 +1451,7 @@ auto zip(Sig1& sig1, Sig2& sig2) {
 /**
  * @brief Pipe operator for composing signal transformations
  */
-template <typename Source, typename Op>
+template<typename Source, typename Op>
 auto operator|(Source& source, Op&& op) {
     return std::forward<Op>(op)(source);
 }
@@ -1471,7 +1472,7 @@ namespace sigslot::rx {
 /**
  * @brief A signal wrapper that forwards emissions on a specific scheduler
  */
-template <typename Source, typename Scheduler>
+template<typename Source, typename Scheduler>
 class observed_signal {
 public:
     using source_type = Source;
@@ -1485,7 +1486,7 @@ private:
     mutable std::optional<scoped_connection> conn_;
     mutable exec::async_scope scope_;
 
-    template <typename S>
+    template<typename S>
     static auto& get_connectable(S& s) {
         if constexpr (requires { s.output(); }) {
             return s.output();
@@ -1518,7 +1519,7 @@ public:
     observed_signal(const observed_signal&) = delete;
     observed_signal& operator=(const observed_signal&) = delete;
 
-    template <typename... SlotArgs>
+    template<typename... SlotArgs>
     connection connect(SlotArgs&&... args) {
         ensure_connected();
         return output_.connect(std::forward<SlotArgs>(args)...);
@@ -1536,11 +1537,12 @@ private:
             conn_.emplace(connectable.connect([this](auto&&... args) {
                 // Capture args by value for async execution
                 auto captured = std::make_tuple(args...);
-                auto work = stdexec::schedule(scheduler_) 
-                    | stdexec::then([this, c = std::move(captured)]() mutable {
-                        std::apply([this](auto&&... a) {
-                            output_(std::forward<decltype(a)>(a)...);
-                        }, std::move(c));
+                auto work =
+                    stdexec::schedule(scheduler_) |
+                    stdexec::then([this, c = std::move(captured)]() mutable {
+                        std::apply(
+                            [this](auto&&... a) { output_(std::forward<decltype(a)>(a)...); },
+                            std::move(c));
                     });
                 scope_.spawn(std::move(work));
             }));
@@ -1551,7 +1553,7 @@ private:
 /**
  * @brief A signal wrapper that debounces using a scheduler
  */
-template <typename Source, typename Scheduler>
+template<typename Source, typename Scheduler>
 class scheduler_debounced_signal {
 public:
     using source_type = Source;
@@ -1574,7 +1576,7 @@ private:
     mutable std::shared_ptr<state> state_;
     mutable exec::async_scope scope_;
 
-    template <typename S>
+    template<typename S>
     static auto& get_connectable(S& s) {
         if constexpr (requires { s.output(); }) {
             return s.output();
@@ -1611,7 +1613,7 @@ public:
     scheduler_debounced_signal(const scheduler_debounced_signal&) = delete;
     scheduler_debounced_signal& operator=(const scheduler_debounced_signal&) = delete;
 
-    template <typename... SlotArgs>
+    template<typename... SlotArgs>
     connection connect(SlotArgs&&... args) {
         ensure_connected();
         return output_.connect(std::forward<SlotArgs>(args)...);
@@ -1638,22 +1640,21 @@ private:
 
                 if (!s->pending) {
                     s->pending = true;
-                    
+
                     // Schedule debounce check
-                    auto work = stdexec::schedule(sched)
-                        | stdexec::then([s, d, out]() {
-                            // Simple polling approach - sleep then check
-                            std::this_thread::sleep_for(d);
-                            
-                            std::lock_guard lk(s->mtx);
-                            auto elapsed = clock_type::now() - s->last_emission;
-                            if (elapsed >= d) {
-                                s->pending = false;
-                                (*out)();
-                            } else {
-                                s->pending = false;
-                            }
-                        });
+                    auto work = stdexec::schedule(sched) | stdexec::then([s, d, out]() {
+                                    // Simple polling approach - sleep then check
+                                    std::this_thread::sleep_for(d);
+
+                                    std::lock_guard lk(s->mtx);
+                                    auto elapsed = clock_type::now() - s->last_emission;
+                                    if (elapsed >= d) {
+                                        s->pending = false;
+                                        (*out)();
+                                    } else {
+                                        s->pending = false;
+                                    }
+                                });
                     sc->spawn(std::move(work));
                 }
             }));
@@ -1668,11 +1669,11 @@ private:
 /**
  * @brief Factory for observe_on operator
  */
-template <typename Scheduler>
+template<typename Scheduler>
 struct observe_on_op {
     Scheduler scheduler;
 
-    template <typename Source>
+    template<typename Source>
     auto operator()(Source& source) const {
         return observed_signal<Source, Scheduler>(source, scheduler);
     }
@@ -1681,12 +1682,12 @@ struct observe_on_op {
 /**
  * @brief Factory for debounce_on operator
  */
-template <typename Scheduler>
+template<typename Scheduler>
 struct debounce_on_op {
     Scheduler scheduler;
     std::chrono::milliseconds delay;
 
-    template <typename Source>
+    template<typename Source>
     auto operator()(Source& source) const {
         return scheduler_debounced_signal<Source, Scheduler>(source, scheduler, delay);
     }
@@ -1705,7 +1706,7 @@ struct debounce_on_op {
  * Example:
  *   auto on_pool = sig | rx::observe_on(pool.get_scheduler());
  */
-template <typename Scheduler>
+template<typename Scheduler>
 auto observe_on(Scheduler&& scheduler) {
     return observe_on_op<std::decay_t<Scheduler>>{std::forward<Scheduler>(scheduler)};
 }
@@ -1723,7 +1724,7 @@ auto observe_on(Scheduler&& scheduler) {
  * Example:
  *   auto debounced = sig | rx::debounce_on(pool.get_scheduler(), 100ms);
  */
-template <typename Scheduler>
+template<typename Scheduler>
 auto debounce_on(Scheduler&& scheduler, std::chrono::milliseconds delay) {
     return debounce_on_op<std::decay_t<Scheduler>>{std::forward<Scheduler>(scheduler), delay};
 }

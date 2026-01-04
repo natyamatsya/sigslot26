@@ -130,7 +130,7 @@ TEST_CASE("Threaded Misc", "[signal_threaded]") {
 
     sum = 0;
     sigslot::signal<int> sig;
-    
+
     // Use operation counts instead of time-based delays
     // Scale inversely with repeat count to keep total work constant
     constexpr int OPS_PER_THREAD = 1000 / SIGSLOT_TEST_REPEAT;

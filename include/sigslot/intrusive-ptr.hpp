@@ -29,18 +29,21 @@ namespace sigslot::detail {
  */
 class intrusive_refcount {
     mutable std::atomic<std::size_t> m_strong{0};
-    mutable std::atomic<std::size_t> m_weak{1};  // +1 for strong refs existing
+    mutable std::atomic<std::size_t> m_weak{1}; // +1 for strong refs existing
     bool m_arena_allocated = false;
-    slot_arena* m_arena = nullptr;  // Optional arena for safe reset tracking
-    mutable bool m_pending_weak_notified = false;  // Track if we notified arena of pending weak
-    
+    slot_arena* m_arena = nullptr;                // Optional arena for safe reset tracking
+    mutable bool m_pending_weak_notified = false; // Track if we notified arena of pending weak
+
 protected:
     intrusive_refcount() noexcept = default;
     // NOLINTNEXTLINE(hicpp-named-parameter,readability-named-parameter)
-    intrusive_refcount(const intrusive_refcount& /*unused*/) noexcept : m_strong(0), m_weak(1), m_arena_allocated(false) {}
+    intrusive_refcount(const intrusive_refcount& /*unused*/) noexcept
+        : m_strong(0)
+        , m_weak(1)
+        , m_arena_allocated(false) {}
     // NOLINTNEXTLINE(cert-oop54-cpp) - intentionally ignores source, refcount is not copied
     intrusive_refcount& operator=(const intrusive_refcount& /*unused*/) noexcept { return *this; }
-    
+
     /**
      * @brief Called when strong count reaches zero
      * 
@@ -51,14 +54,12 @@ protected:
         // Call destructor only - memory stays valid for weak refs
         this->~intrusive_refcount();
     }
-    
+
 public:
     virtual ~intrusive_refcount() = default;
-    
-    void add_ref() const noexcept {
-        m_strong.fetch_add(1, std::memory_order_relaxed);
-    }
-    
+
+    void add_ref() const noexcept { m_strong.fetch_add(1, std::memory_order_relaxed); }
+
     void release_ref() const noexcept {
         if (m_strong.fetch_sub(1, std::memory_order_acq_rel) == 1) {
             // Last strong reference gone
@@ -68,7 +69,7 @@ public:
                 m_arena->add_pending_weak();
                 m_pending_weak_notified = true;
             }
-            
+
             // Call destroy() which runs the destructor (but doesn't free memory)
             destroy();
             // After destroy(), vtable is invalid - do NOT call virtual functions!
@@ -80,11 +81,9 @@ public:
             }
         }
     }
-    
-    void add_weak_ref() const noexcept {
-        m_weak.fetch_add(1, std::memory_order_relaxed);
-    }
-    
+
+    void add_weak_ref() const noexcept { m_weak.fetch_add(1, std::memory_order_relaxed); }
+
     void release_weak_ref() const noexcept {
         if (m_weak.fetch_sub(1, std::memory_order_acq_rel) == 1) {
             // Last weak reference gone - deallocate memory
@@ -93,7 +92,7 @@ public:
             do_destroy_weak();
         }
     }
-    
+
     /**
      * @brief Atomically try to acquire a strong reference if object is alive
      * @return true if strong ref acquired, false if object already destroyed
@@ -103,34 +102,34 @@ public:
     [[nodiscard]] bool try_add_ref() const noexcept {
         std::size_t count = m_strong.load(std::memory_order_relaxed);
         while (count != 0) {
-            if (m_strong.compare_exchange_weak(count, count + 1,
-                    std::memory_order_acq_rel, std::memory_order_relaxed)) {
+            if (m_strong.compare_exchange_weak(count, count + 1, std::memory_order_acq_rel,
+                                               std::memory_order_relaxed)) {
                 return true;
             }
             // count is updated by compare_exchange_weak on failure
         }
         return false;
     }
-    
+
     [[nodiscard]] std::size_t use_count() const noexcept {
         return m_strong.load(std::memory_order_relaxed);
     }
-    
+
     [[nodiscard]] std::size_t weak_count() const noexcept {
         // Subtract 1 because we always hold +1 while strong > 0
         std::size_t w = m_weak.load(std::memory_order_relaxed);
         std::size_t s = m_strong.load(std::memory_order_relaxed);
         return s > 0 ? w - 1 : w;
     }
-    
+
     // Mark as arena-allocated with optional arena pointer for safe reset tracking
-    void set_arena_allocated(slot_arena* arena = nullptr) noexcept { 
-        m_arena_allocated = true; 
+    void set_arena_allocated(slot_arena* arena = nullptr) noexcept {
+        m_arena_allocated = true;
         m_arena = arena;
     }
     [[nodiscard]] bool is_arena_allocated() const noexcept { return m_arena_allocated; }
     [[nodiscard]] slot_arena* get_arena() const noexcept { return m_arena; }
-    
+
 private:
     // Non-virtual memory deallocation - safe to call after destructor
     void do_destroy_weak() const noexcept {
@@ -153,108 +152,105 @@ private:
 template<typename T>
 class intrusive_ptr {
     T* ptr_ = nullptr;
-    
+
     void add_ref() noexcept {
         if (ptr_) {
             ptr_->add_ref();
         }
     }
-    
+
     void do_release() noexcept {
         if (ptr_) {
             ptr_->release_ref();
             ptr_ = nullptr;
         }
     }
-    
+
 public:
     using element_type = T;
-    
+
     // Constructors
     constexpr intrusive_ptr() noexcept = default;
     constexpr intrusive_ptr(std::nullptr_t) noexcept {}
-    
-    explicit intrusive_ptr(T* p, bool add_ref = true) noexcept : ptr_(p) {
+
+    explicit intrusive_ptr(T* p, bool add_ref = true) noexcept
+        : ptr_(p) {
         if (ptr_ && add_ref) {
             ptr_->add_ref();
         }
     }
-    
+
     // Copy constructor
-    intrusive_ptr(const intrusive_ptr& other) noexcept : ptr_(other.ptr_) {
+    intrusive_ptr(const intrusive_ptr& other) noexcept
+        : ptr_(other.ptr_) {
         add_ref();
     }
-    
+
     template<typename U>
-    intrusive_ptr(const intrusive_ptr<U>& other) noexcept : ptr_(other.get()) {
+    intrusive_ptr(const intrusive_ptr<U>& other) noexcept
+        : ptr_(other.get()) {
         add_ref();
     }
-    
+
     // Move constructor
-    intrusive_ptr(intrusive_ptr&& other) noexcept : ptr_(other.ptr_) {
+    intrusive_ptr(intrusive_ptr&& other) noexcept
+        : ptr_(other.ptr_) {
         other.ptr_ = nullptr;
     }
-    
+
     template<typename U>
-    intrusive_ptr(intrusive_ptr<U>&& other) noexcept : ptr_(other.release()) {}
-    
+    intrusive_ptr(intrusive_ptr<U>&& other) noexcept
+        : ptr_(other.release()) {}
+
     // Destructor
-    ~intrusive_ptr() {
-        do_release();
-    }
-    
+    ~intrusive_ptr() { do_release(); }
+
     // Assignment operators
     intrusive_ptr& operator=(const intrusive_ptr& other) noexcept {
         intrusive_ptr(other).swap(*this);
         return *this;
     }
-    
+
     intrusive_ptr& operator=(intrusive_ptr&& other) noexcept {
         intrusive_ptr(std::move(other)).swap(*this);
         return *this;
     }
-    
+
     intrusive_ptr& operator=(std::nullptr_t) noexcept {
         reset();
         return *this;
     }
-    
+
     // Observers
     T* get() const noexcept { return ptr_; }
     T& operator*() const noexcept { return *ptr_; }
     T* operator->() const noexcept { return ptr_; }
     explicit operator bool() const noexcept { return ptr_ != nullptr; }
-    
-    [[nodiscard]] std::size_t use_count() const noexcept {
-        return ptr_ ? ptr_->use_count() : 0;
-    }
-    
+
+    [[nodiscard]] std::size_t use_count() const noexcept { return ptr_ ? ptr_->use_count() : 0; }
+
     // Modifiers
-    void reset(T* p = nullptr) noexcept {
-        intrusive_ptr(p).swap(*this);
-    }
-    
+    void reset(T* p = nullptr) noexcept { intrusive_ptr(p).swap(*this); }
+
     T* release() noexcept {
         T* tmp = ptr_;
         ptr_ = nullptr;
         return tmp;
     }
-    
-    void swap(intrusive_ptr& other) noexcept {
-        std::swap(ptr_, other.ptr_);
-    }
-    
+
+    void swap(intrusive_ptr& other) noexcept { std::swap(ptr_, other.ptr_); }
+
     // Comparison operators
     template<typename U>
     bool operator==(const intrusive_ptr<U>& other) const noexcept {
         return ptr_ == other.get();
     }
-    
+
     template<typename U>
     bool operator!=(const intrusive_ptr<U>& other) const noexcept {
         return ptr_ != other.get();
     }
-    
+
     bool operator==(std::nullptr_t) const noexcept { return ptr_ == nullptr; }
     bool operator!=(std::nullptr_t) const noexcept { return ptr_ != nullptr; }
 };
@@ -271,13 +267,13 @@ public:
 template<typename T>
 class intrusive_weak_ptr {
     T* ptr_ = nullptr;
-    
+
     void add_weak() noexcept {
         if (ptr_) {
             ptr_->add_weak_ref();
         }
     }
-    
+
     // Note: TSan (GCC) reports a race when release_weak_ref() is called while
     // the pointed-to object's destructor is running on another thread. This is
     // benign because we only access m_weak (atomic with trivial destructor) and
@@ -288,26 +284,29 @@ class intrusive_weak_ptr {
             ptr_->release_weak_ref();
         }
     }
-    
+
 public:
     constexpr intrusive_weak_ptr() noexcept = default;
-    
-    intrusive_weak_ptr(const intrusive_ptr<T>& strong) noexcept : ptr_(strong.get()) {
+
+    intrusive_weak_ptr(const intrusive_ptr<T>& strong) noexcept
+        : ptr_(strong.get()) {
         add_weak();
     }
-    
+
     // Allow construction from derived types
     template<typename U>
         requires std::is_base_of_v<T, U>
-    intrusive_weak_ptr(const intrusive_ptr<U>& strong) noexcept : ptr_(strong.get()) {
+    intrusive_weak_ptr(const intrusive_ptr<U>& strong) noexcept
+        : ptr_(strong.get()) {
         add_weak();
     }
-    
+
     // Copy operations - must manage weak count
-    intrusive_weak_ptr(const intrusive_weak_ptr& other) noexcept : ptr_(other.ptr_) {
+    intrusive_weak_ptr(const intrusive_weak_ptr& other) noexcept
+        : ptr_(other.ptr_) {
         add_weak();
     }
-    
+
     intrusive_weak_ptr& operator=(const intrusive_weak_ptr& other) noexcept {
         if (this != &other) {
             release_weak();
@@ -316,12 +315,13 @@ public:
         }
         return *this;
     }
-    
+
     // Move operations - transfer ownership, no atomic ops needed
-    intrusive_weak_ptr(intrusive_weak_ptr&& other) noexcept : ptr_(other.ptr_) {
+    intrusive_weak_ptr(intrusive_weak_ptr&& other) noexcept
+        : ptr_(other.ptr_) {
         other.ptr_ = nullptr;
     }
-    
+
     intrusive_weak_ptr& operator=(intrusive_weak_ptr&& other) noexcept {
         if (this != &other) {
             release_weak();
@@ -330,22 +330,18 @@ public:
         }
         return *this;
     }
-    
-    ~intrusive_weak_ptr() {
-        release_weak();
-    }
-    
+
+    ~intrusive_weak_ptr() { release_weak(); }
+
     intrusive_weak_ptr& operator=(const intrusive_ptr<T>& strong) noexcept {
         release_weak();
         ptr_ = strong.get();
         add_weak();
         return *this;
     }
-    
-    [[nodiscard]] bool expired() const noexcept {
-        return !ptr_ || ptr_->use_count() == 0;
-    }
-    
+
+    [[nodiscard]] bool expired() const noexcept { return !ptr_ || ptr_->use_count() == 0; }
+
     /**
      * @brief Atomically acquire a strong reference if object is alive
      * @return intrusive_ptr to object, or empty if expired
@@ -365,15 +361,13 @@ public:
         }
         return intrusive_ptr<T>();
     }
-    
+
     void reset() noexcept {
         release_weak();
         ptr_ = nullptr;
     }
-    
-    void swap(intrusive_weak_ptr& other) noexcept {
-        std::swap(ptr_, other.ptr_);
-    }
+
+    void swap(intrusive_weak_ptr& other) noexcept { std::swap(ptr_, other.ptr_); }
 };
 
 /**

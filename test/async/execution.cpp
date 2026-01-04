@@ -149,7 +149,7 @@ TEST_CASE("Signal sender with let_value", "[execution]") {
 
 TEST_CASE("Signal sender - multiple concurrent waiters", "[execution][threading]") {
     auto iteration = GENERATE(GENERATE_REPEAT());
-    (void)iteration;  // Unused, just drives repetition
+    (void)iteration; // Unused, just drives repetition
 
     sigslot::signal<int> sig;
     std::atomic<int> completed{0};

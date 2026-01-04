@@ -10,7 +10,7 @@
 #include <type_traits>
 
 #ifdef SIGSLOT_USE_INTRUSIVE_PTR
-    #include "intrusive-ptr.hpp"
+#include "intrusive-ptr.hpp"
 #endif
 
 namespace sigslot {
@@ -69,13 +69,11 @@ public:
     void unblock() noexcept { m_blocked.store(false, std::memory_order_relaxed); }
 
     // Index management for signal_base (public for cross-compiler compatibility)
-    [[nodiscard]] std::size_t index() const noexcept { 
-        return m_index.load(std::memory_order_relaxed); 
+    [[nodiscard]] std::size_t index() const noexcept {
+        return m_index.load(std::memory_order_relaxed);
     }
 
-    void set_index(std::size_t idx) noexcept { 
-        m_index.store(idx, std::memory_order_relaxed); 
-    }
+    void set_index(std::size_t idx) noexcept { m_index.store(idx, std::memory_order_relaxed); }
 
 protected:
     virtual void do_disconnect() {}

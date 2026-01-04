@@ -19,17 +19,17 @@
 // Define SIGSLOT_USE_SLOT_POOL to enable thread-local memory pooling
 // Options: ARENA (fastest), PMR (portable), or undefined (default allocator)
 #ifdef SIGSLOT_USE_SLOT_POOL
-    #if SIGSLOT_USE_SLOT_POOL == 2
-        #include "slot-arena.hpp"  // Custom arena allocator
-    #else
-        #include <memory_resource>  // std::pmr
-    #endif
+#if SIGSLOT_USE_SLOT_POOL == 2
+#include "slot-arena.hpp" // Custom arena allocator
+#else
+#include <memory_resource> // std::pmr
+#endif
 #endif
 
 // Optional: Use intrusive reference counting instead of shared_ptr
 // Enables arena allocation without cross-thread issues
 #ifdef SIGSLOT_USE_INTRUSIVE_PTR
-    #include "intrusive-ptr.hpp"
+#include "intrusive-ptr.hpp"
 #endif
 
 #include "signal-sbo.hpp"
@@ -37,7 +37,7 @@
 
 // Optional: Use variant-based slot storage for eliminating virtual dispatch
 #ifdef SIGSLOT_USE_SLOT_VARIANT
-    #include "slot-variant.hpp"
+#include "slot-variant.hpp"
 #endif
 
 // Cache line size for preventing false sharing between threads.
@@ -451,8 +451,10 @@ const T& cow_read(copy_on_write<T>& v) {
 template<typename T>
 class ref_write_guard {
 public:
-    explicit ref_write_guard(T& ref) : m_ref(ref) {}
+    explicit ref_write_guard(T& ref)
+        : m_ref(ref) {}
     T& get() { return m_ref; }
+
 private:
     T& m_ref;
 };
@@ -489,7 +491,7 @@ T& cow_write(copy_on_write<T>& v) {
 // (C++20 P0718R2) is not yet reliably supported across all standard library implementations.
 #if defined(_MSC_VER)
 #pragma warning(push)
-#pragma warning(disable: 4996)  // STL4029: std::atomic_*() for shared_ptr deprecated
+#pragma warning(disable : 4996) // STL4029: std::atomic_*() for shared_ptr deprecated
 #elif defined(__clang__) || defined(__GNUC__)
 #pragma GCC diagnostic push
 #pragma GCC diagnostic ignored "-Wdeprecated-declarations"
@@ -514,15 +516,15 @@ public:
 
     // Move: take ownership of published snapshot
     rcu_cow(rcu_cow&& x) noexcept
-        : m_published(std::atomic_exchange_explicit(&x.m_published, 
-                      std::make_shared<T>(), std::memory_order_acq_rel)) {}
+        : m_published(std::atomic_exchange_explicit(&x.m_published, std::make_shared<T>(),
+                                                    std::memory_order_acq_rel)) {}
 
     ~rcu_cow() = default;
 
     rcu_cow& operator=(const rcu_cow& x) noexcept {
         if (&x != this) {
-            std::atomic_store_explicit(&m_published,
-                std::atomic_load_explicit(&x.m_published, std::memory_order_acquire),
+            std::atomic_store_explicit(
+                &m_published, std::atomic_load_explicit(&x.m_published, std::memory_order_acquire),
                 std::memory_order_release);
         }
         return *this;
@@ -531,9 +533,10 @@ public:
     rcu_cow& operator=(rcu_cow&& x) noexcept {
         if (&x != this) {
             std::atomic_store_explicit(&m_published,
-                std::atomic_exchange_explicit(&x.m_published, 
-                    std::make_shared<T>(), std::memory_order_acq_rel),
-                std::memory_order_release);
+                                       std::atomic_exchange_explicit(&x.m_published,
+                                                                     std::make_shared<T>(),
+                                                                     std::memory_order_acq_rel),
+                                       std::memory_order_release);
         }
         return *this;
     }
@@ -573,7 +576,7 @@ public:
     void publish(std::shared_ptr<T> new_data) {
         std::atomic_store_explicit(&m_published, std::move(new_data), std::memory_order_release);
     }
-    
+
     /**
      * @brief Lock-free CAS publish for concurrent writers.
      * @param expected The snapshot we copied from (updated on failure)
@@ -588,10 +591,7 @@ public:
         // Cast to non-const for the compare_exchange (we're replacing the whole ptr)
         auto expected_nonconst = std::const_pointer_cast<T>(expected);
         bool success = std::atomic_compare_exchange_strong_explicit(
-            &m_published,
-            &expected_nonconst,
-            std::move(new_data),
-            std::memory_order_acq_rel,
+            &m_published, &expected_nonconst, std::move(new_data), std::memory_order_acq_rel,
             std::memory_order_acquire);
         if (!success) {
             // Update expected with current value for retry
@@ -602,8 +602,8 @@ public:
 
     friend inline void swap(rcu_cow& x, rcu_cow& y) noexcept {
         auto tmp = std::atomic_load_explicit(&x.m_published, std::memory_order_acquire);
-        std::atomic_store_explicit(&x.m_published,
-            std::atomic_load_explicit(&y.m_published, std::memory_order_acquire),
+        std::atomic_store_explicit(
+            &x.m_published, std::atomic_load_explicit(&y.m_published, std::memory_order_acquire),
             std::memory_order_release);
         std::atomic_store_explicit(&y.m_published, tmp, std::memory_order_release);
     }
@@ -629,10 +629,10 @@ private:
 template<typename T>
 class rcu_write_guard {
 public:
-    rcu_write_guard(rcu_cow<T>& cow) 
+    rcu_write_guard(rcu_cow<T>& cow)
         : m_cow(cow)
         , m_copy(cow.copy_for_write()) {}
-    
+
     ~rcu_write_guard() {
         if (m_copy) {
             m_cow.publish(std::move(m_copy));
@@ -687,7 +687,7 @@ inline intrusive_ptr<B> make_slot_ptr(Arg&&... arg) {
     // Allocate from arena, construct with placement new
     auto& arena = get_slot_arena();
     void* mem = arena.allocate(sizeof(D), alignof(D));
-    D* ptr = new(mem) D(std::forward<Arg>(arg)...);
+    D* ptr = new (mem) D(std::forward<Arg>(arg)...);
     ptr->set_arena_allocated(); // Mark so destructor doesn't call delete
     return intrusive_ptr<B>(static_cast<B*>(ptr), true);
 }
@@ -719,21 +719,20 @@ inline intrusive_ptr<B> make_slot_ptr(Arg&&... arg) {
 // Arena allocator strategy
 template<typename B, typename D, typename... Arg>
 inline std::shared_ptr<B> make_slot_ptr(Arg&&... arg) {
-    return std::static_pointer_cast<B>(
-        detail::make_shared_arena<D>(std::forward<Arg>(arg)...)
-    );
+    return std::static_pointer_cast<B>(detail::make_shared_arena<D>(std::forward<Arg>(arg)...));
 }
 
 #else
 // PMR pool strategy
 struct slot_pool_holder {
     std::pmr::unsynchronized_pool_resource pool;
-    
-    slot_pool_holder() : pool(std::pmr::pool_options{
-        .max_blocks_per_chunk = 32,      // Reasonable chunk size
-        .largest_required_pool_block = 256  // Most slots are < 256 bytes
-    }) {}
-    
+
+    slot_pool_holder()
+        : pool(std::pmr::pool_options{
+              .max_blocks_per_chunk = 32,        // Reasonable chunk size
+              .largest_required_pool_block = 256 // Most slots are < 256 bytes
+          }) {}
+
     std::pmr::memory_resource* get() noexcept { return &pool; }
 };
 
@@ -745,9 +744,7 @@ inline std::pmr::memory_resource* get_slot_pool() {
 template<typename B, typename D, typename... Arg>
 inline std::shared_ptr<B> make_slot_ptr(Arg&&... arg) {
     std::pmr::polymorphic_allocator<D> alloc(get_slot_pool());
-    return std::static_pointer_cast<B>(
-        std::allocate_shared<D>(alloc, std::forward<Arg>(arg)...)
-    );
+    return std::static_pointer_cast<B>(std::allocate_shared<D>(alloc, std::forward<Arg>(arg)...));
 }
 #endif // SIGSLOT_USE_SLOT_POOL == 2
 
@@ -905,23 +902,23 @@ template<typename Group, typename... Args>
 class slot_base : public grouped_slot<Group> {
 public:
     using group_id = Group;
-    
+
 #ifdef SIGSLOT_USE_SLOT_VARIANT
     // Inline function pointer for direct dispatch (eliminates vtable lookup)
     // Returns true if call succeeded, false if slot expired (tracked slots)
-    using call_fn_t = bool(*)(slot_base*, Args...);
-    
+    using call_fn_t = bool (*)(slot_base*, Args...);
+
     explicit slot_base(cleanable<Group>& c, group_id const& gid, call_fn_t call_fn)
         : grouped_slot<Group>(gid)
         , cleaner(c)
         , call_fn_(call_fn) {}
-    
+
     // Fallback constructor using virtual dispatch (for extended slots)
     explicit slot_base(cleanable<Group>& c, group_id const& gid)
         : grouped_slot<Group>(gid)
         , cleaner(c)
         , call_fn_(&slot_base::virtual_dispatch) {}
-    
+
     static bool virtual_dispatch(slot_base* self, Args... args) {
         self->call_slot(args...);
         return true;
@@ -999,6 +996,7 @@ private:
 template<typename Group, typename Func, typename... Args>
 class slot final : public slot_base<Group, Args...> {
     using base_t = slot_base<Group, Args...>;
+
 public:
     template<typename F>
     constexpr slot(cleanable<Group>& c, F&& f, Group const& gid)
@@ -1007,7 +1005,8 @@ public:
 #else
         : base_t(c, gid)
 #endif
-        , func{std::forward<F>(f)} {}
+        , func{std::forward<F>(f)} {
+    }
 
 #ifdef SIGSLOT_USE_SLOT_VARIANT
     static bool call_fn_impl(base_t* self, Args... args) {
@@ -1031,6 +1030,7 @@ private:
 template<typename Group, typename Func, typename... Args>
 class slot_extended final : public slot_base<Group, Args...> {
     using base_t = slot_base<Group, Args...>;
+
 public:
     template<typename F>
     constexpr slot_extended(cleanable<Group>& c, F&& f, Group const& gid)
@@ -1039,7 +1039,8 @@ public:
 #else
         : base_t(c, gid)
 #endif
-        , func{std::forward<F>(f)} {}
+        , func{std::forward<F>(f)} {
+    }
 
 #ifdef SIGSLOT_USE_SLOT_VARIANT
     static bool call_fn_impl(base_t* self, Args... args) {
@@ -1068,6 +1069,7 @@ private:
 template<typename Group, typename Pmf, typename Ptr, typename... Args>
 class slot_pmf final : public slot_base<Group, Args...> {
     using base_t = slot_base<Group, Args...>;
+
 public:
     template<typename F, typename P>
     constexpr slot_pmf(cleanable<Group>& c, F&& f, P&& p, Group const& gid)
@@ -1077,7 +1079,8 @@ public:
         : base_t(c, gid)
 #endif
         , pmf{std::forward<F>(f)}
-        , ptr{std::forward<P>(p)} {}
+        , ptr{std::forward<P>(p)} {
+    }
 
 #ifdef SIGSLOT_USE_SLOT_VARIANT
     static bool call_fn_impl(base_t* self, Args... args) {
@@ -1105,6 +1108,7 @@ private:
 template<typename Group, typename Pmf, typename Ptr, typename... Args>
 class slot_pmf_extended final : public slot_base<Group, Args...> {
     using base_t = slot_base<Group, Args...>;
+
 public:
     template<typename F, typename P>
     constexpr slot_pmf_extended(cleanable<Group>& c, F&& f, P&& p, Group const& gid)
@@ -1114,7 +1118,8 @@ public:
         : base_t(c, gid)
 #endif
         , pmf{std::forward<F>(f)}
-        , ptr{std::forward<P>(p)} {}
+        , ptr{std::forward<P>(p)} {
+    }
 
 #ifdef SIGSLOT_USE_SLOT_VARIANT
     static bool call_fn_impl(base_t* self, Args... args) {
@@ -1145,6 +1150,7 @@ private:
 template<typename Group, typename Func, typename WeakPtr, typename... Args>
 class slot_tracked final : public slot_base<Group, Args...> {
     using base_t = slot_base<Group, Args...>;
+
 public:
     template<typename F, typename P>
     constexpr slot_tracked(cleanable<Group>& c, F&& f, P&& p, Group const& gid)
@@ -1154,7 +1160,8 @@ public:
         : base_t(c, gid)
 #endif
         , func{std::forward<F>(f)}
-        , ptr{std::forward<P>(p)} {}
+        , ptr{std::forward<P>(p)} {
+    }
 
 #ifdef SIGSLOT_USE_SLOT_VARIANT
     static bool call_fn_impl(base_t* self, Args... args) {
@@ -1204,6 +1211,7 @@ private:
 template<typename Group, typename Pmf, typename WeakPtr, typename... Args>
 class slot_pmf_tracked final : public slot_base<Group, Args...> {
     using base_t = slot_base<Group, Args...>;
+
 public:
     template<typename F, typename P>
     constexpr slot_pmf_tracked(cleanable<Group>& c, F&& f, P&& p, Group const& gid)
@@ -1213,7 +1221,8 @@ public:
         : base_t(c, gid)
 #endif
         , pmf{std::forward<F>(f)}
-        , ptr{std::forward<P>(p)} {}
+        , ptr{std::forward<P>(p)} {
+    }
 
 #ifdef SIGSLOT_USE_SLOT_VARIANT
     static bool call_fn_impl(base_t* self, Args... args) {
@@ -1303,12 +1312,14 @@ private:
     struct group_type {
         slots_type slts;
         group_id gid;
-        
+
         // SBO-specific optimizations
         constexpr bool is_using_heap() const noexcept { return slts.is_using_heap(); }
         constexpr std::size_t heap_threshold() const noexcept { return 3; }
         constexpr std::span<slot_ptr> get_slots_span() noexcept { return slts.get_span(); }
-        constexpr std::span<const slot_ptr> get_slots_span() const noexcept { return slts.get_span(); }
+        constexpr std::span<const slot_ptr> get_slots_span() const noexcept {
+            return slts.get_span();
+        }
     };
     using list_type = std::vector<group_type>; // kept ordered by ascending gid
 
@@ -1323,15 +1334,16 @@ public:
     // Lock-free move constructor using RCU swap
     signal_base(signal_base&& o) noexcept
         : m_block{o.m_block.load(std::memory_order_relaxed)} {
-        swap(m_slots, o.m_slots);  // RCU atomic swap
+        swap(m_slots, o.m_slots); // RCU atomic swap
     }
 
     // Lock-free move assignment using RCU swap
     signal_base& operator=(signal_base&& o) noexcept {
         if (this != &o) {
-            swap(m_slots, o.m_slots);  // RCU atomic swap
-            m_block.store(o.m_block.exchange(m_block.load(std::memory_order_relaxed), 
-                         std::memory_order_relaxed), std::memory_order_relaxed);
+            swap(m_slots, o.m_slots); // RCU atomic swap
+            m_block.store(o.m_block.exchange(m_block.load(std::memory_order_relaxed),
+                                             std::memory_order_relaxed),
+                          std::memory_order_relaxed);
         }
         return *this;
     }
@@ -1395,16 +1407,17 @@ public:
     class batch_emitter {
         cow_copy_type<list_type> m_snapshot;
         const std::atomic<bool>* m_block;
-        
+
     public:
         explicit batch_emitter(cow_copy_type<list_type> snapshot, const std::atomic<bool>& block)
-            : m_snapshot(std::move(snapshot)), m_block(&block) {}
-        
+            : m_snapshot(std::move(snapshot))
+            , m_block(&block) {}
+
         batch_emitter(const batch_emitter&) = delete;
         batch_emitter& operator=(const batch_emitter&) = delete;
         batch_emitter(batch_emitter&&) = default;
         batch_emitter& operator=(batch_emitter&&) = default;
-        
+
         /**
          * @brief Emit a value using the cached snapshot
          * 
@@ -1415,7 +1428,7 @@ public:
             if (m_block->load(std::memory_order_relaxed)) {
                 return;
             }
-            
+
             for (const auto& group : detail::cow_read(m_snapshot)) {
                 if (!group.is_using_heap()) {
                     for (const auto& s : group.get_slots_span()) {
@@ -1428,7 +1441,7 @@ public:
                 }
             }
         }
-        
+
         /**
          * @brief Emit a value (operator() alias for batch_emit())
          */
@@ -1437,7 +1450,7 @@ public:
             batch_emit(std::forward<U>(a)...);
         }
     };
-    
+
     /**
      * @brief Create a batch emitter for optimized sequential emissions
      * 
@@ -1696,7 +1709,7 @@ public:
             // Lock-free CAS loop
             while (true) {
                 auto current = m_slots.read();
-                
+
                 size_t count = 0;
                 for (const auto& group : *current) {
                     if (group.gid == gid) {
@@ -1704,11 +1717,11 @@ public:
                         break;
                     }
                 }
-                
+
                 if (count == 0) {
                     return 0;
                 }
-                
+
                 auto new_groups = std::make_shared<list_type>(*current);
                 for (auto& group : *new_groups) {
                     if (group.gid == gid) {
@@ -1716,7 +1729,7 @@ public:
                         break;
                     }
                 }
-                
+
                 if (m_slots.try_publish(current, std::move(new_groups))) {
                     return count;
                 }
@@ -1834,13 +1847,13 @@ public:
         }
         return count;
     }
-    
+
     // Public SBO interface for performance monitoring
     template<typename Self>
     auto get_sbo_stats(this Self&& self) noexcept {
         return self.get_sbo_stats();
     }
-    
+
     template<typename Self>
     bool is_using_sbo_efficiently(this Self&& self) noexcept {
         auto stats = self.get_sbo_stats();
@@ -1905,12 +1918,12 @@ protected:
     void clean(detail::grouped_slot<Group>* state) override {
         const auto idx = state->index();
         const auto& gid = state->group();
-        
+
         if constexpr (is_thread_safe) {
             // Lock-free CAS loop
             while (true) {
                 auto current = m_slots.read();
-                
+
                 bool found = false;
                 for (const auto& group : *current) {
                     if (group.gid == gid) {
@@ -1921,11 +1934,11 @@ protected:
                         break;
                     }
                 }
-                
+
                 if (!found) {
                     return;
                 }
-                
+
                 auto new_groups = std::make_shared<list_type>(*current);
                 for (auto& group : *new_groups) {
                     if (group.gid == gid) {
@@ -1940,7 +1953,7 @@ protected:
                         break;
                     }
                 }
-                
+
                 if (m_slots.try_publish(current, std::move(new_groups))) {
                     return;
                 }
@@ -1990,7 +2003,7 @@ private:
             while (true) {
                 auto current = m_slots.read();
                 auto new_groups = std::make_shared<list_type>(*current);
-                
+
                 // find the group
                 std::size_t group_idx = 0;
                 while (group_idx < new_groups->size() && (*new_groups)[group_idx].gid < gid) {
@@ -1999,7 +2012,7 @@ private:
 
                 // create a new group if necessary
                 if (group_idx == new_groups->size() || (*new_groups)[group_idx].gid != gid) {
-                    new_groups->insert(new_groups->begin() + static_cast<std::ptrdiff_t>(group_idx), 
+                    new_groups->insert(new_groups->begin() + static_cast<std::ptrdiff_t>(group_idx),
                                        {{}, gid});
                 }
 
@@ -2007,11 +2020,11 @@ private:
                 auto& target_group = (*new_groups)[group_idx];
                 s->set_index(target_group.slts.size());
                 target_group.slts.push_back(std::move(s));
-                
+
                 if (m_slots.try_publish(current, new_groups)) {
-                    break;  // Success!
+                    break; // Success!
                 }
-                
+
                 // CAS failed - retrieve slot and retry
                 s = std::move((*new_groups)[group_idx].slts.back());
                 (*new_groups)[group_idx].slts.pop_back();
@@ -2042,7 +2055,7 @@ private:
         }
         return count;
     }
-    
+
     // SBO-specific statistics for performance monitoring
     struct sbo_stats {
         size_t total_groups = 0;
@@ -2053,16 +2066,16 @@ private:
         size_t heap_slots = 0;
         double stack_efficiency = 0.0; // percentage of slots using SBO
     };
-    
+
     template<typename Self>
     sbo_stats get_sbo_stats(this Self&& self) noexcept {
         cow_copy_type<list_type> ref = std::forward<Self>(self).slots_reference();
         sbo_stats stats{};
-        
+
         for (const auto& group : detail::cow_read(ref)) {
             ++stats.total_groups;
             stats.total_slots += group.slts.size();
-            
+
             if (group.is_using_heap()) {
                 ++stats.heap_groups;
                 stats.heap_slots += group.slts.size();
@@ -2071,11 +2084,11 @@ private:
                 stats.stack_slots += group.slts.size();
             }
         }
-        
+
         if (stats.total_slots > 0) {
             stats.stack_efficiency = (double(stats.stack_slots) / stats.total_slots) * 100.0;
         }
-        
+
         return stats;
     }
 
@@ -2086,7 +2099,7 @@ private:
             // Lock-free CAS loop
             while (true) {
                 auto current = m_slots.read();
-                
+
                 size_t count = 0;
                 for (const auto& group : *current) {
                     for (const auto& slt : group.slts) {
@@ -2095,14 +2108,14 @@ private:
                         }
                     }
                 }
-                
+
                 if (count == 0) {
                     return 0;
                 }
-                
+
                 auto new_groups = std::make_shared<list_type>(*current);
                 size_t actual_count = 0;
-                
+
                 for (auto& group : *new_groups) {
                     auto& slts = group.slts;
                     size_t i = 0;
@@ -2119,7 +2132,7 @@ private:
                         }
                     }
                 }
-                
+
                 if (m_slots.try_publish(current, std::move(new_groups))) {
                     return actual_count;
                 }

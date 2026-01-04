@@ -7,19 +7,19 @@
 template<std::size_t SBO_SIZE>
 class test_sbo_signal {
     sigslot::detail::sbo_container<int, SBO_SIZE> slots_;
-    
+
 public:
     template<typename F>
     void connect(F&& f) {
         slots_.emplace_back(std::forward<F>(f));
     }
-    
+
     void operator()(int value) {
         for (auto& slot : slots_.get_span()) {
             slot(value);
         }
     }
-    
+
     std::size_t slot_count() const { return slots_.size(); }
     void disconnect_all() { slots_.clear(); }
 };
@@ -63,21 +63,21 @@ static void BM_SBO_ContainerConstruction_FiveSlots(benchmark::State& state) {
 
 static void BM_SBO_EmplaceBack_Stack(benchmark::State& state) {
     sigslot::detail::sbo_container<int, 3> sbo;
-    
+
     for (auto _ : state) {
         state.PauseTiming();
         if (sbo.size() >= 3) {
             sbo.clear();
         }
         state.ResumeTiming();
-        
+
         sbo.emplace_back(42);
     }
 }
 
 static void BM_SBO_EmplaceBack_Heap(benchmark::State& state) {
     sigslot::detail::sbo_container<int, 2> sbo;
-    
+
     for (auto _ : state) {
         state.PauseTiming();
         if (sbo.size() == 0) {
@@ -86,7 +86,7 @@ static void BM_SBO_EmplaceBack_Heap(benchmark::State& state) {
             sbo.emplace_back(2);
         }
         state.ResumeTiming();
-        
+
         sbo.emplace_back(42);
     }
 }
@@ -96,7 +96,7 @@ static void BM_SBO_Iteration_Stack(benchmark::State& state) {
     sbo.emplace_back(1);
     sbo.emplace_back(2);
     sbo.emplace_back(3);
-    
+
     for (auto _ : state) {
         int sum = 0;
         for (auto& val : sbo.get_span()) {
@@ -113,7 +113,7 @@ static void BM_SBO_Iteration_Heap(benchmark::State& state) {
     sbo.emplace_back(3);
     sbo.emplace_back(4);
     sbo.emplace_back(5);
-    
+
     for (auto _ : state) {
         int sum = 0;
         for (auto& val : sbo.get_span()) {
@@ -133,7 +133,7 @@ static void BM_Regular_SignalConstruction(benchmark::State& state) {
 
 static void BM_Regular_Connect(benchmark::State& state) {
     sigslot::signal<int> sig;
-    
+
     for (auto _ : state) {
         sig.connect([](int x) { benchmark::DoNotOptimize(x); });
         sig.disconnect_all();
@@ -142,11 +142,11 @@ static void BM_Regular_Connect(benchmark::State& state) {
 
 static void BM_Regular_Emission(benchmark::State& state) {
     sigslot::signal<int> sig;
-    
+
     for (int i = 0; i < 3; ++i) {
         sig.connect([i](int x) { benchmark::DoNotOptimize(x); });
     }
-    
+
     for (auto _ : state) {
         sig(42);
     }

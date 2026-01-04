@@ -17,7 +17,7 @@ using signal_sbo = signal<T...>;
 template<typename... T>
 class signal_with_sbo : public signal_base<T...> {
     using base = signal_base<T...>;
-    
+
 public:
     using base::base;
     using base::operator();
@@ -25,13 +25,13 @@ public:
     using base::disconnect;
     using base::disconnect_all;
     using base::slot_count;
-    
+
     // Additional SBO-specific methods for demonstration
     bool is_using_heap_for_group(typename base::group_id gid) const {
         // This would be available when SBO is fully integrated
         return false; // Placeholder
     }
-    
+
     std::size_t heap_threshold() const {
         return 3; // SBO capacity
     }

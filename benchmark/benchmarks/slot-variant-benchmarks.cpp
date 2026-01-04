@@ -13,7 +13,7 @@
 static void BM_VirtualDispatch_SingleSlot(benchmark::State& state) {
     sigslot::signal<int> sig;
     sig.connect([](int x) { benchmark::DoNotOptimize(x); });
-    
+
     for (auto _ : state) {
         sig(42);
     }
@@ -24,7 +24,7 @@ static void BM_VirtualDispatch_10Slots(benchmark::State& state) {
     for (int i = 0; i < 10; ++i) {
         sig.connect([](int x) { benchmark::DoNotOptimize(x); });
     }
-    
+
     for (auto _ : state) {
         sig(42);
     }
@@ -36,12 +36,9 @@ static void BM_VirtualDispatch_10Slots(benchmark::State& state) {
 
 static void BM_SlotVariant_SingleSlot(benchmark::State& state) {
     using slot_t = sigslot::detail::slot_variant<int32_t, int>;
-    
-    auto slot = slot_t::make_plain(
-        [](int x) { benchmark::DoNotOptimize(x); },
-        int32_t{0}
-    );
-    
+
+    auto slot = slot_t::make_plain([](int x) { benchmark::DoNotOptimize(x); }, int32_t{0});
+
     for (auto _ : state) {
         slot(42);
     }
@@ -49,16 +46,13 @@ static void BM_SlotVariant_SingleSlot(benchmark::State& state) {
 
 static void BM_SlotVariant_10Slots(benchmark::State& state) {
     using slot_t = sigslot::detail::slot_variant<int32_t, int>;
-    
+
     std::vector<slot_t> slots;
     slots.reserve(10);
     for (int i = 0; i < 10; ++i) {
-        slots.push_back(slot_t::make_plain(
-            [](int x) { benchmark::DoNotOptimize(x); },
-            int32_t{0}
-        ));
+        slots.push_back(slot_t::make_plain([](int x) { benchmark::DoNotOptimize(x); }, int32_t{0}));
     }
-    
+
     for (auto _ : state) {
         for (auto& slot : slots) {
             slot(42);
@@ -72,7 +66,7 @@ static void BM_SlotVariant_10Slots(benchmark::State& state) {
 
 static void BM_VirtualDispatch_Connect(benchmark::State& state) {
     sigslot::signal<int> sig;
-    
+
     for (auto _ : state) {
         auto conn = sig.connect([](int x) { benchmark::DoNotOptimize(x); });
         sig.disconnect_all();
@@ -81,12 +75,9 @@ static void BM_VirtualDispatch_Connect(benchmark::State& state) {
 
 static void BM_SlotVariant_Construct(benchmark::State& state) {
     using slot_t = sigslot::detail::slot_variant<int32_t, int>;
-    
+
     for (auto _ : state) {
-        auto slot = slot_t::make_plain(
-            [](int x) { benchmark::DoNotOptimize(x); },
-            int32_t{0}
-        );
+        auto slot = slot_t::make_plain([](int x) { benchmark::DoNotOptimize(x); }, int32_t{0});
         benchmark::DoNotOptimize(slot);
     }
 }
@@ -104,7 +95,7 @@ static void BM_VirtualDispatch_PMF(benchmark::State& state) {
     sigslot::signal<int> sig;
     TestReceiver receiver;
     sig.connect(&TestReceiver::on_signal, &receiver);
-    
+
     for (auto _ : state) {
         sig(42);
         benchmark::DoNotOptimize(receiver.value);
@@ -113,10 +104,10 @@ static void BM_VirtualDispatch_PMF(benchmark::State& state) {
 
 static void BM_SlotVariant_PMF(benchmark::State& state) {
     using slot_t = sigslot::detail::slot_variant<int32_t, int>;
-    
+
     TestReceiver receiver;
     auto slot = slot_t::make_pmf(&TestReceiver::on_signal, &receiver, int32_t{0});
-    
+
     for (auto _ : state) {
         slot(42);
         benchmark::DoNotOptimize(receiver.value);
@@ -131,7 +122,7 @@ static void BM_VirtualDispatch_Tracked(benchmark::State& state) {
     sigslot::signal<int> sig;
     auto receiver = std::make_shared<TestReceiver>();
     sig.connect(&TestReceiver::on_signal, receiver);
-    
+
     for (auto _ : state) {
         sig(42);
         benchmark::DoNotOptimize(receiver->value);
@@ -140,12 +131,12 @@ static void BM_VirtualDispatch_Tracked(benchmark::State& state) {
 
 static void BM_SlotVariant_Tracked(benchmark::State& state) {
     using slot_t = sigslot::detail::slot_variant<int32_t, int>;
-    
+
     auto receiver = std::make_shared<TestReceiver>();
     std::weak_ptr<TestReceiver> weak = receiver;
-    
+
     auto slot = slot_t::make_pmf_tracked(&TestReceiver::on_signal, weak, int32_t{0});
-    
+
     for (auto _ : state) {
         slot(42);
         benchmark::DoNotOptimize(receiver->value);
@@ -158,11 +149,11 @@ static void BM_SlotVariant_Tracked(benchmark::State& state) {
 
 static void BM_SlotVariant_SizeOf(benchmark::State& state) {
     using slot_t = sigslot::detail::slot_variant<int32_t, int>;
-    
+
     for (auto _ : state) {
         benchmark::DoNotOptimize(sizeof(slot_t));
     }
-    
+
     state.counters["sizeof_slot_variant"] = sizeof(slot_t);
     state.counters["storage_size"] = slot_t::storage_size;
 }
@@ -176,7 +167,7 @@ static void BM_VirtualDispatch_100Slots(benchmark::State& state) {
     for (int i = 0; i < 100; ++i) {
         sig.connect([](int x) { benchmark::DoNotOptimize(x); });
     }
-    
+
     for (auto _ : state) {
         sig(42);
     }
@@ -185,17 +176,14 @@ static void BM_VirtualDispatch_100Slots(benchmark::State& state) {
 
 static void BM_SlotVariant_100Slots_Inline(benchmark::State& state) {
     using slot_t = sigslot::detail::slot_variant<int32_t, int>;
-    
+
     // Inline storage - contiguous in memory
     std::vector<slot_t> slots;
     slots.reserve(100);
     for (int i = 0; i < 100; ++i) {
-        slots.push_back(slot_t::make_plain(
-            [](int x) { benchmark::DoNotOptimize(x); },
-            int32_t{0}
-        ));
+        slots.push_back(slot_t::make_plain([](int x) { benchmark::DoNotOptimize(x); }, int32_t{0}));
     }
-    
+
     for (auto _ : state) {
         for (auto& slot : slots) {
             slot(42);
@@ -206,17 +194,15 @@ static void BM_SlotVariant_100Slots_Inline(benchmark::State& state) {
 
 static void BM_SlotVariant_100Slots_Pointer(benchmark::State& state) {
     using slot_t = sigslot::detail::slot_variant<int32_t, int>;
-    
+
     // Pointer-based storage - scattered in memory (simulates current impl)
     std::vector<std::unique_ptr<slot_t>> slots;
     slots.reserve(100);
     for (int i = 0; i < 100; ++i) {
-        slots.push_back(std::make_unique<slot_t>(slot_t::make_plain(
-            [](int x) { benchmark::DoNotOptimize(x); },
-            int32_t{0}
-        )));
+        slots.push_back(std::make_unique<slot_t>(
+            slot_t::make_plain([](int x) { benchmark::DoNotOptimize(x); }, int32_t{0})));
     }
-    
+
     for (auto _ : state) {
         for (auto& slot : slots) {
             (*slot)(42);
@@ -232,7 +218,7 @@ static void BM_SlotVariant_100Slots_Pointer(benchmark::State& state) {
 static void BM_SignalInline_SingleSlot(benchmark::State& state) {
     sigslot::signal_inline<int> sig;
     sig.connect([](int x) { benchmark::DoNotOptimize(x); });
-    
+
     for (auto _ : state) {
         sig(42);
     }
@@ -243,7 +229,7 @@ static void BM_SignalInline_10Slots(benchmark::State& state) {
     for (int i = 0; i < 10; ++i) {
         sig.connect([](int x) { benchmark::DoNotOptimize(x); });
     }
-    
+
     for (auto _ : state) {
         sig(42);
     }
@@ -255,7 +241,7 @@ static void BM_SignalInline_100Slots(benchmark::State& state) {
     for (int i = 0; i < 100; ++i) {
         sig.connect([](int x) { benchmark::DoNotOptimize(x); });
     }
-    
+
     for (auto _ : state) {
         sig(42);
     }
@@ -264,7 +250,7 @@ static void BM_SignalInline_100Slots(benchmark::State& state) {
 
 static void BM_SignalInline_Connect(benchmark::State& state) {
     sigslot::signal_inline<int> sig;
-    
+
     for (auto _ : state) {
         sig.connect([](int x) { benchmark::DoNotOptimize(x); });
         sig.disconnect_all();
@@ -275,7 +261,7 @@ static void BM_SignalInline_PMF(benchmark::State& state) {
     sigslot::signal_inline<int> sig;
     TestReceiver receiver;
     sig.connect(&TestReceiver::on_signal, &receiver);
-    
+
     for (auto _ : state) {
         sig(42);
         benchmark::DoNotOptimize(receiver.value);
@@ -289,7 +275,7 @@ static void BM_SignalInline_PMF(benchmark::State& state) {
 static void BM_SignalInlineRW_SingleSlot(benchmark::State& state) {
     sigslot::signal_inline_rw<int> sig;
     sig.connect([](int x) { benchmark::DoNotOptimize(x); });
-    
+
     for (auto _ : state) {
         sig(42);
     }
@@ -300,7 +286,7 @@ static void BM_SignalInlineRW_10Slots(benchmark::State& state) {
     for (int i = 0; i < 10; ++i) {
         sig.connect([](int x) { benchmark::DoNotOptimize(x); });
     }
-    
+
     for (auto _ : state) {
         sig(42);
     }
@@ -309,7 +295,7 @@ static void BM_SignalInlineRW_10Slots(benchmark::State& state) {
 static void BM_SignalInlineRCU_SingleSlot(benchmark::State& state) {
     sigslot::signal_inline_rcu<int> sig;
     sig.connect([](int x) { benchmark::DoNotOptimize(x); });
-    
+
     for (auto _ : state) {
         sig(42);
     }
@@ -320,7 +306,7 @@ static void BM_SignalInlineRCU_10Slots(benchmark::State& state) {
     for (int i = 0; i < 10; ++i) {
         sig.connect([](int x) { benchmark::DoNotOptimize(x); });
     }
-    
+
     for (auto _ : state) {
         sig(42);
     }
@@ -329,7 +315,7 @@ static void BM_SignalInlineRCU_10Slots(benchmark::State& state) {
 static void BM_SignalInlineSeqlock_SingleSlot(benchmark::State& state) {
     sigslot::signal_inline_seqlock<16, int> sig;
     sig.connect([](int x) { benchmark::DoNotOptimize(x); });
-    
+
     for (auto _ : state) {
         sig(42);
     }
@@ -340,7 +326,7 @@ static void BM_SignalInlineSeqlock_10Slots(benchmark::State& state) {
     for (int i = 0; i < 10; ++i) {
         sig.connect([](int x) { benchmark::DoNotOptimize(x); });
     }
-    
+
     for (auto _ : state) {
         sig(42);
     }

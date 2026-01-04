@@ -218,14 +218,14 @@ public:
         conn_ = signal_->connect([this, result_ptr = &result_](auto&&... args) {
             // Store result first
             *result_ptr = std::make_tuple(std::forward<decltype(args)>(args)...);
-            
+
             // Save what we need before any potential destruction
             auto conn = std::move(conn_);
             auto cont = continuation_;
-            
+
             // Disconnect first (safe, we have a copy)
             conn.disconnect();
-            
+
             // Resume coroutine - after this, 'this' may be destroyed
             // DO NOT access 'this' or any member after this point!
             if (cont)
