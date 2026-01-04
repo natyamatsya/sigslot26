@@ -327,7 +327,7 @@ static void BM_SignalInlineRCU_10Slots(benchmark::State& state) {
 }
 
 static void BM_SignalInlineSeqlock_SingleSlot(benchmark::State& state) {
-    sigslot::signal_inline_seqlock<int> sig;
+    sigslot::signal_inline_seqlock<16, int> sig;
     sig.connect([](int x) { benchmark::DoNotOptimize(x); });
     
     for (auto _ : state) {
@@ -336,7 +336,7 @@ static void BM_SignalInlineSeqlock_SingleSlot(benchmark::State& state) {
 }
 
 static void BM_SignalInlineSeqlock_10Slots(benchmark::State& state) {
-    sigslot::signal_inline_seqlock<int> sig;
+    sigslot::signal_inline_seqlock<16, int> sig;
     for (int i = 0; i < 10; ++i) {
         sig.connect([](int x) { benchmark::DoNotOptimize(x); });
     }

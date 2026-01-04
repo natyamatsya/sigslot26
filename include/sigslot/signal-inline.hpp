@@ -9,8 +9,16 @@
 #include <mutex>
 #include <shared_mutex>
 #include <algorithm>
+#include <expected>
 
 namespace sigslot {
+
+/**
+ * @brief Error codes for signal_inline_seqlock operations.
+ */
+enum class seqlock_error {
+    capacity_exceeded  ///< Maximum slot capacity reached
+};
 
 /**
  * @brief A high-performance signal using inline slot storage.
@@ -377,17 +385,98 @@ private:
 #endif
 };
 
+// ============================================================================
+// Fixed-capacity storage for seqlock safety
+// ============================================================================
+
+namespace detail {
+
 /**
- * @brief Lock-free signal using seqlock pattern
+ * @brief Fixed-capacity vector that never reallocates.
  * 
- * Readers (emitters) are wait-free when no writer is active.
- * If a writer is detected during emission, the reader retries.
- * Writers are serialized via mutex but don't block readers.
+ * This enables safe use with seqlock - readers can iterate while writers
+ * append because the storage address never changes.
  * 
- * Best for: Read-heavy workloads where emissions vastly outnumber connects.
- * Trade-off: Readers may retry if emission overlaps with connect/disconnect.
+ * @tparam T Element type
+ * @tparam Capacity Maximum number of elements (compile-time constant)
  */
-template<typename... T>
+template<typename T, std::size_t Capacity>
+class fixed_vector {
+public:
+    using value_type = T;
+    using size_type = std::size_t;
+    using reference = T&;
+    using const_reference = const T&;
+    
+    fixed_vector() = default;
+    
+    ~fixed_vector() {
+        clear();
+    }
+    
+    fixed_vector(const fixed_vector&) = delete;
+    fixed_vector& operator=(const fixed_vector&) = delete;
+    fixed_vector(fixed_vector&&) = delete;
+    fixed_vector& operator=(fixed_vector&&) = delete;
+    
+    template<typename... Args>
+    bool emplace_back(Args&&... args) {
+        if (size_ >= Capacity) return false;
+        new (data() + size_) T(std::forward<Args>(args)...);
+        ++size_;
+        return true;
+    }
+    
+    void clear() {
+        for (std::size_t i = 0; i < size_; ++i) {
+            std::launder(data() + i)->~T();
+        }
+        size_ = 0;
+    }
+    
+    [[nodiscard]] T& operator[](std::size_t i) noexcept {
+        return *std::launder(data() + i);
+    }
+    
+    [[nodiscard]] const T& operator[](std::size_t i) const noexcept {
+        return *std::launder(data() + i);
+    }
+    
+    [[nodiscard]] T* data() noexcept {
+        return reinterpret_cast<T*>(storage_);
+    }
+    
+    [[nodiscard]] const T* data() const noexcept {
+        return reinterpret_cast<const T*>(storage_);
+    }
+    
+    [[nodiscard]] std::size_t size() const noexcept { return size_; }
+    [[nodiscard]] bool empty() const noexcept { return size_ == 0; }
+    [[nodiscard]] bool full() const noexcept { return size_ >= Capacity; }
+    [[nodiscard]] static constexpr std::size_t capacity() noexcept { return Capacity; }
+    
+private:
+    alignas(T) std::byte storage_[Capacity * sizeof(T)]{};
+    std::size_t size_ = 0;
+};
+
+} // namespace detail
+
+/**
+ * @brief Lock-free signal using seqlock pattern with fixed-capacity storage.
+ * 
+ * Uses a compile-time fixed capacity to avoid reallocation, making the seqlock
+ * pattern safe. Readers (emitters) are wait-free when no writer is active.
+ * 
+ * @tparam MaxSlots Maximum number of connected slots (default: 16)
+ * @tparam T... Signal argument types
+ * 
+ * Trade-offs:
+ * - Lock-free emission (fastest thread-safe option)
+ * - Fixed slot capacity - connect fails if full
+ * - Readers may retry if emission overlaps with connect/disconnect
+ */
+template<std::size_t MaxSlots, typename... T>
 class signal_inline_seqlock {
 #ifdef SIGSLOT_CACHE_LINE_PADDING
     static constexpr std::size_t cache_line_size = 64;
@@ -405,28 +494,47 @@ public:
     signal_inline_seqlock(signal_inline_seqlock&&) = delete;
     signal_inline_seqlock& operator=(signal_inline_seqlock&&) = delete;
     
+    /**
+     * @brief Connect a callable.
+     * @return std::expected<void, seqlock_error> - error if capacity exceeded
+     */
     template<typename Callable>
-    void connect(Callable&& c, group_id gid = group_id{}) {
+    [[nodiscard]] std::expected<void, seqlock_error> connect(Callable&& c, group_id gid = group_id{}) {
         std::lock_guard lock(write_mutex_);
+        if (slots_.full()) {
+            return std::unexpected(seqlock_error::capacity_exceeded);
+        }
         begin_write();
-        slots_.push_back(slot_type::make_plain(std::forward<Callable>(c), gid));
+        slots_.emplace_back(slot_type::make_plain(std::forward<Callable>(c), gid));
         end_write();
+        return {};
     }
     
+    /**
+     * @brief Connect a member function.
+     * @return std::expected<void, seqlock_error> - error if capacity exceeded
+     */
     template<typename Pmf, typename Ptr>
-    void connect(Pmf&& pmf, Ptr&& ptr, group_id gid = group_id{}) {
+    [[nodiscard]] std::expected<void, seqlock_error> connect(Pmf&& pmf, Ptr&& ptr, group_id gid = group_id{}) {
         std::lock_guard lock(write_mutex_);
+        if (slots_.full()) {
+            return std::unexpected(seqlock_error::capacity_exceeded);
+        }
         begin_write();
-        slots_.push_back(slot_type::make_pmf(
+        slots_.emplace_back(slot_type::make_pmf(
             std::forward<Pmf>(pmf), 
             std::forward<Ptr>(ptr), 
             gid
         ));
         end_write();
+        return {};
     }
     
     /**
-     * @brief Lock-free emission with retry on concurrent write
+     * @brief Lock-free emission with retry on concurrent write.
+     * 
+     * Wait-free when no writer is active. If a write is detected during
+     * emission, the reader retries from the beginning.
      */
     template<typename... U>
     void operator()(U&&... args) {
@@ -437,13 +545,11 @@ public:
             seq = seq_.load(std::memory_order_acquire);
             
             // If write in progress (odd sequence), spin-wait
-            if (seq & 1) {
-                // Could add backoff here for high-contention scenarios
-                continue;
-            }
+            if (seq & 1) continue;
             
-            // Read slots and emit
-            for (std::size_t i = 0; i < slots_.size(); ++i) {
+            // Read size and emit - storage never reallocates so this is safe
+            const std::size_t count = slots_.size();
+            for (std::size_t i = 0; i < count; ++i) {
                 slots_[i](std::forward<U>(args)...);
             }
             
@@ -462,7 +568,6 @@ public:
     void unblock() noexcept { blocked_.store(false, std::memory_order_relaxed); }
     
     [[nodiscard]] std::size_t slot_count() const noexcept {
-        // Read with seqlock consistency
         std::uint64_t seq;
         std::size_t count;
         do {
@@ -472,6 +577,9 @@ public:
         } while (seq_.load(std::memory_order_acquire) != seq);
         return count;
     }
+    
+    [[nodiscard]] static constexpr std::size_t max_slots() noexcept { return MaxSlots; }
+    [[nodiscard]] bool full() const noexcept { return slots_.full(); }
 
 private:
     void begin_write() noexcept {
@@ -491,7 +599,7 @@ private:
     std::atomic<std::uint64_t> seq_{0};
 #endif
     std::atomic<bool> blocked_{false};
-    std::vector<slot_type> slots_;
+    detail::fixed_vector<slot_type, MaxSlots> slots_;
     
     // ========================================================================
     // Cold data - accessed only during connect/disconnect
@@ -502,5 +610,17 @@ private:
     std::mutex write_mutex_;
 #endif
 };
+
+/**
+ * @brief Convenience alias with default capacity of 16 slots.
+ */
+template<typename... T>
+using signal_inline_seqlock16 = signal_inline_seqlock<16, T...>;
+
+/**
+ * @brief Convenience alias with capacity of 32 slots.
+ */
+template<typename... T>
+using signal_inline_seqlock32 = signal_inline_seqlock<32, T...>;
 
 } // namespace sigslot

@@ -246,39 +246,56 @@ TEST_CASE("signal_inline_rcu member function", "[signal_inline_rcu]") {
 }
 
 // =============================================================================
-// signal_inline_seqlock tests (lock-free seqlock)
+// signal_inline_seqlock tests (lock-free with fixed capacity)
 // =============================================================================
 
 TEST_CASE("signal_inline_seqlock basic emission", "[signal_inline_seqlock]") {
-    sigslot::signal_inline_seqlock<int> sig;
+    sigslot::signal_inline_seqlock<16, int> sig;
     int result = 0;
     
-    sig.connect([&](int x) { result = x; });
+    REQUIRE(sig.connect([&](int x) { result = x; }).has_value());
     sig(42);
     
     REQUIRE(result == 42);
 }
 
 TEST_CASE("signal_inline_seqlock multiple slots", "[signal_inline_seqlock]") {
-    sigslot::signal_inline_seqlock<int> sig;
+    sigslot::signal_inline_seqlock<16, int> sig;
     int sum = 0;
     
-    sig.connect([&](int x) { sum += x; });
-    sig.connect([&](int x) { sum += x * 2; });
+    REQUIRE(sig.connect([&](int x) { sum += x; }).has_value());
+    REQUIRE(sig.connect([&](int x) { sum += x * 2; }).has_value());
     
     sig(10);
     
     REQUIRE(sum == 30);  // 10 + 20
 }
 
+TEST_CASE("signal_inline_seqlock capacity limit", "[signal_inline_seqlock]") {
+    sigslot::signal_inline_seqlock<4, int> sig;
+    
+    REQUIRE(sig.connect([](int) {}).has_value());
+    REQUIRE(sig.connect([](int) {}).has_value());
+    REQUIRE(sig.connect([](int) {}).has_value());
+    REQUIRE(sig.connect([](int) {}).has_value());
+    
+    auto result = sig.connect([](int) {});
+    REQUIRE_FALSE(result.has_value());
+    REQUIRE(result.error() == sigslot::seqlock_error::capacity_exceeded);
+    
+    REQUIRE(sig.slot_count() == 4);
+    REQUIRE(sig.full());
+    REQUIRE(sig.max_slots() == 4);
+}
+
 TEST_CASE("signal_inline_seqlock concurrent emission", "[signal_inline_seqlock][threaded]") {
     auto iteration = GENERATE_REPEAT();
     (void)iteration;
     
-    sigslot::signal_inline_seqlock<int> sig;
+    sigslot::signal_inline_seqlock<16, int> sig;
     std::atomic<int> sum{0};
     
-    sig.connect([&](int x) { sum += x; });
+    (void)sig.connect([&](int x) { sum += x; });
     
     std::vector<std::thread> threads;
     for (int i = 0; i < 4; ++i) {
@@ -297,20 +314,20 @@ TEST_CASE("signal_inline_seqlock concurrent emission", "[signal_inline_seqlock][
 }
 
 TEST_CASE("signal_inline_seqlock member function", "[signal_inline_seqlock]") {
-    sigslot::signal_inline_seqlock<int> sig;
+    sigslot::signal_inline_seqlock<16, int> sig;
     Receiver r;
     
-    sig.connect(&Receiver::on_signal, &r);
+    REQUIRE(sig.connect(&Receiver::on_signal, &r).has_value());
     sig(7);
     
     REQUIRE(r.value == 7);
 }
 
 TEST_CASE("signal_inline_seqlock block/unblock", "[signal_inline_seqlock]") {
-    sigslot::signal_inline_seqlock<int> sig;
+    sigslot::signal_inline_seqlock<16, int> sig;
     int result = 0;
     
-    sig.connect([&](int x) { result = x; });
+    (void)sig.connect([&](int x) { result = x; });
     
     sig.block();
     sig(42);
@@ -322,14 +339,14 @@ TEST_CASE("signal_inline_seqlock block/unblock", "[signal_inline_seqlock]") {
 }
 
 TEST_CASE("signal_inline_seqlock slot_count", "[signal_inline_seqlock]") {
-    sigslot::signal_inline_seqlock<int> sig;
+    sigslot::signal_inline_seqlock<16, int> sig;
     
     REQUIRE(sig.slot_count() == 0);
     
-    sig.connect([](int) {});
+    (void)sig.connect([](int) {});
     REQUIRE(sig.slot_count() == 1);
     
-    sig.connect([](int) {});
+    (void)sig.connect([](int) {});
     REQUIRE(sig.slot_count() == 2);
     
     sig.disconnect_all();
@@ -340,12 +357,12 @@ TEST_CASE("signal_inline_seqlock concurrent connect and emit", "[signal_inline_s
     auto iteration = GENERATE_REPEAT();
     (void)iteration;
     
-    sigslot::signal_inline_seqlock<int> sig;
+    sigslot::signal_inline_seqlock<16, int> sig;
     std::atomic<int> sum{0};
     std::atomic<bool> done{false};
     
     // Start with one slot
-    sig.connect([&](int x) { sum += x; });
+    (void)sig.connect([&](int x) { sum += x; });
     
     // Emitter thread
     std::thread emitter([&]() {
@@ -354,9 +371,9 @@ TEST_CASE("signal_inline_seqlock concurrent connect and emit", "[signal_inline_s
         }
     });
     
-    // Connect more slots while emitting
+    // Connect more slots while emitting (up to capacity)
     for (int i = 0; i < 10; ++i) {
-        sig.connect([&](int x) { sum += x; });
+        (void)sig.connect([&](int x) { sum += x; });
         std::this_thread::sleep_for(std::chrono::milliseconds(1));
     }
     
@@ -366,4 +383,29 @@ TEST_CASE("signal_inline_seqlock concurrent connect and emit", "[signal_inline_s
     // Just verify no crash - sum value depends on timing
     REQUIRE(sum > 0);
     REQUIRE(sig.slot_count() == 11);
+}
+
+TEST_CASE("signal_inline_seqlock16 alias", "[signal_inline_seqlock]") {
+    sigslot::signal_inline_seqlock16<int> sig;
+    int result = 0;
+    
+    (void)sig.connect([&](int x) { result = x; });
+    sig(42);
+    
+    REQUIRE(result == 42);
+    REQUIRE(sig.max_slots() == 16);
+}
+
+TEST_CASE("signal_inline_seqlock expected error", "[signal_inline_seqlock]") {
+    sigslot::signal_inline_seqlock<2, int> sig;
+    
+    // First two should succeed
+    REQUIRE(sig.connect([](int) {}).has_value());
+    REQUIRE(sig.connect([](int) {}).has_value());
+    
+    // Third should return error
+    auto result = sig.connect([](int) {});
+    REQUIRE_FALSE(result.has_value());
+    REQUIRE(result.error() == sigslot::seqlock_error::capacity_exceeded);
+    REQUIRE(sig.slot_count() == 2);
 }
