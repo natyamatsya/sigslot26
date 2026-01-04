@@ -97,13 +97,6 @@ union Storage {
 
 **Test Coverage**: 8 comprehensive test suites (128-138 tests)
 
-#### 3.2 Batch Emission
-**Status**: Design phase  
-**Impact**: Low-Medium  
-**Effort**: Low
-
-For reactive pipelines emitting many values in sequence.
-
 ---
 
 ### Phase 4: Connection Path Optimization
@@ -113,8 +106,8 @@ regression in the connection path (64.6 ns → 160 ns baseline). Phase 4 focuses
 on recovering this overhead.
 
 #### 4.1 Slot Memory Pool
-**Status**: Proposed  
-**Impact**: High  
+**Status**: ✅ Implemented  
+**Impact**: Low-Medium (3% improvement with PMR)  
 **Effort**: Medium
 
 **Problem**: Each `connect()` calls `std::make_shared<slot_t>()` which:
@@ -122,38 +115,61 @@ on recovering this overhead.
 2. Allocates slot object (~48-64 bytes depending on callable)
 3. Two separate allocations = poor cache locality
 
-**Solution**: Thread-local memory pool for slot allocations.
+**Solution**: Thread-local memory pool with auto-detection of fast allocators.
 
-```cpp
-// Pool allocator using std::pmr or custom implementation
-template<typename Slot>
-class slot_pool {
-    // Pre-allocated chunks of slot-sized memory
-    std::pmr::monotonic_buffer_resource m_buffer;
-    std::pmr::pool_options m_options{.max_blocks_per_chunk = 64};
-    
-public:
-    template<typename... Args>
-    std::shared_ptr<Slot> allocate(Args&&... args) {
-        // Allocate from pool, ~10ns vs ~100ns for make_shared
-        auto* mem = m_buffer.allocate(sizeof(Slot), alignof(Slot));
-        return std::shared_ptr<Slot>(
-            new(mem) Slot(std::forward<Args>(args)...),
-            [this](Slot* p) { p->~Slot(); m_buffer.deallocate(p, sizeof(Slot)); }
-        );
-    }
-};
+**Implementation Strategies**:
 
-// Thread-local pool avoids contention
-inline thread_local slot_pool<slot_base> tls_slot_pool;
+1. **PMR (Recommended)**: `std::pmr::unsynchronized_pool_resource`
+   - Thread-local pools (no contention)
+   - Standard C++17
+   - 3% performance improvement
+
+2. **ARENA (Experimental)**: Custom bump-pointer allocator
+   - Single allocation for control block + object
+   - Thread-safety requires global mutex (adds contention)
+   - Not recommended for production
+
+3. **DEFAULT**: System allocator
+   - Used when jemalloc/tcmalloc/mimalloc detected
+   - Those allocators already have thread-local caches
+
+**Benchmark Results** (AMD Ryzen 9 7950X3D, MSVC 19.50):
+
+| Strategy | Connect Time | vs Baseline | Thread-Safety |
+|----------|-------------|-------------|---------------|
+| **PMR** | **167 ns** | **3% faster** ✅ | Thread-local pools |
+| ARENA (TLS) | 157 ns | 9% faster | ❌ Crashes (cross-thread `shared_ptr`) |
+| ARENA (mutex) | 174 ns | -1% slower | ✅ Global mutex contention |
+| DEFAULT | 172 ns | baseline | ✅ MSVC allocator |
+
+**Key Findings**:
+- PMR provides best balance of performance and safety
+- MSVC's default allocator is already well-optimized
+- Arena allocator incompatible with `shared_ptr` threading model
+- For larger gains (20-50%), link with jemalloc/mimalloc
+
+**CMake Usage**:
+```cmake
+# Auto-detect (default): ARENA if no fast allocator, else DEFAULT
+-DSIGSLOT_SLOT_ALLOCATOR=AUTO
+
+# Manual override
+-DSIGSLOT_SLOT_ALLOCATOR=DEFAULT  # System allocator
+-DSIGSLOT_SLOT_ALLOCATOR=PMR      # std::pmr pool (recommended)
+-DSIGSLOT_SLOT_ALLOCATOR=ARENA    # Custom arena (experimental)
 ```
 
-**Expected Impact**: Reduce connect latency by 50-70% (target: <80ns)
-
-**Considerations**:
-- Thread-local pools avoid contention but use more memory
-- Pool fragmentation for varying slot sizes (callable capture size)
-- Integration with existing `make_slot` infrastructure
+**Code Example**:
+```cpp
+#if SIGSLOT_USE_SLOT_POOL == 1
+// PMR strategy
+template<typename B, typename D, typename... Arg>
+inline std::shared_ptr<B> make_shared(Arg&&... arg) {
+    std::pmr::polymorphic_allocator<D> alloc(get_slot_pool());
+    return std::allocate_shared<D>(alloc, std::forward<Arg>(arg)...);
+}
+#endif
+```
 
 #### 4.2 Intrusive Reference Counting
 **Status**: Research  
@@ -275,15 +291,23 @@ the larger connect regression.
 
 ---
 
-### Phase 5: Advanced Optimizations (Future)
+### Phase 5: Rx & Advanced Optimizations (Future)
 
-#### 5.1 Compile-Time Connections
+#### 5.1 Batch Emission
+**Status**: Design phase  
+**Impact**: Low-Medium  
+**Effort**: Low
+
+For reactive pipelines emitting many values in sequence. Optimize `rx::` operators
+that emit multiple values rapidly.
+
+#### 5.2 Compile-Time Connections
 For static slot configurations known at compile time.
 
-#### 5.2 SIMD Emission
+#### 5.3 SIMD Emission
 Vectorized slot invocation for trivial callables.
 
-#### 5.3 Lock-Free Connect/Disconnect
+#### 5.4 Lock-Free Connect/Disconnect
 Full lock-free implementation using CAS loops.
 
 ---

@@ -23,6 +23,34 @@ option(SIGSLOT_RUN_TESTS "Compile and run tests" OFF)
 option(SIGSLOT_REDUCE_COMPILE_TIME "Attempt at reducing code size and compilation time" OFF)
 option(SIGSLOT_ENABLE_STDEXEC "Enable std::execution support via NVIDIA stdexec" ON)
 option(SIGSLOT_ENABLE_BENCHMARK "Enable Google Benchmark support" OFF)
+option(SIGSLOT_USE_INTRUSIVE_PTR "Use intrusive reference counting instead of shared_ptr (experimental)" OFF)
+set(SIGSLOT_SLOT_ALLOCATOR "AUTO" CACHE STRING "Slot allocator: AUTO, DEFAULT, PMR, or ARENA")
+set_property(CACHE SIGSLOT_SLOT_ALLOCATOR PROPERTY STRINGS AUTO DEFAULT PMR ARENA)
+
+# Detect fast allocators (jemalloc, tcmalloc, mimalloc)
+include(FindFastAllocator)
+
+# Auto-configure slot allocator based on detection
+if(SIGSLOT_SLOT_ALLOCATOR STREQUAL "AUTO")
+    if(SIGSLOT_HAS_FAST_ALLOCATOR)
+        set(SIGSLOT_SLOT_ALLOCATOR "DEFAULT")
+        message(STATUS "Slot allocator: DEFAULT (using ${SIGSLOT_FAST_ALLOCATOR_NAME})")
+    else()
+        set(SIGSLOT_SLOT_ALLOCATOR "ARENA")
+        message(STATUS "Slot allocator: ARENA (no fast allocator detected)")
+    endif()
+else()
+    message(STATUS "Slot allocator: ${SIGSLOT_SLOT_ALLOCATOR} (user-specified)")
+endif()
+
+# Set compile definition based on allocator choice
+if(SIGSLOT_SLOT_ALLOCATOR STREQUAL "ARENA")
+    set(SIGSLOT_USE_SLOT_POOL 2)
+elseif(SIGSLOT_SLOT_ALLOCATOR STREQUAL "PMR")
+    set(SIGSLOT_USE_SLOT_POOL 1)
+else()
+    set(SIGSLOT_USE_SLOT_POOL 0)
+endif()
 
 find_package(Threads REQUIRED)
 
@@ -66,6 +94,8 @@ target_include_directories(
 target_compile_definitions(sigslot INTERFACE 
     $<$<BOOL:${SIGSLOT_REDUCE_COMPILE_TIME}>:SIGSLOT_REDUCE_COMPILE_TIME>
     $<$<BOOL:${SIGSLOT_ENABLE_STDEXEC}>:SIGSLOT_HAVE_STDEXEC>
+    $<$<NOT:$<EQUAL:${SIGSLOT_USE_SLOT_POOL},0>>:SIGSLOT_USE_SLOT_POOL=${SIGSLOT_USE_SLOT_POOL}>
+    $<$<BOOL:${SIGSLOT_USE_INTRUSIVE_PTR}>:SIGSLOT_USE_INTRUSIVE_PTR>
 )
 if(SIGSLOT_ENABLE_STDEXEC)
     target_link_libraries(sigslot INTERFACE STDEXEC::stdexec)

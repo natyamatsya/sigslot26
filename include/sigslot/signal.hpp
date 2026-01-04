@@ -15,6 +15,23 @@
 #include <optional>
 #include <concepts>
 
+// Optional: Enable slot memory pool for faster connect performance
+// Define SIGSLOT_USE_SLOT_POOL to enable thread-local memory pooling
+// Options: ARENA (fastest), PMR (portable), or undefined (default allocator)
+#ifdef SIGSLOT_USE_SLOT_POOL
+    #if SIGSLOT_USE_SLOT_POOL == 2
+        #include "slot_arena.hpp"  // Custom arena allocator
+    #else
+        #include <memory_resource>  // std::pmr
+    #endif
+#endif
+
+// Optional: Use intrusive reference counting instead of shared_ptr
+// Enables arena allocation without cross-thread issues
+#ifdef SIGSLOT_USE_INTRUSIVE_PTR
+    #include "intrusive_ptr.hpp"
+#endif
+
 #include "signal_sbo.hpp"
 
 // Cache line size for preventing false sharing between threads.
@@ -607,6 +624,87 @@ const T& cow_read(const std::shared_ptr<const T>& v) {
     return *v;
 }
 
+// Slot allocation strategies
+#ifdef SIGSLOT_USE_INTRUSIVE_PTR
+/**
+ * @brief Create slot using intrusive reference counting
+ * 
+ * With intrusive_ptr, the reference count is embedded in the object,
+ * eliminating the separate control block. This enables true arena allocation.
+ */
+
+#if defined(SIGSLOT_USE_SLOT_POOL) && SIGSLOT_USE_SLOT_POOL == 2
+// Intrusive + Arena: fastest combination
+template<typename B, typename D, typename... Arg>
+inline intrusive_ptr<B> make_slot_ptr(Arg&&... arg) {
+    // Allocate from arena, construct with placement new
+    auto& arena = get_slot_arena();
+    void* mem = arena.allocate(sizeof(D), alignof(D));
+    D* ptr = new(mem) D(std::forward<Arg>(arg)...);
+    return intrusive_ptr<B>(static_cast<B*>(ptr), true);
+}
+#else
+// Intrusive only: regular heap allocation
+template<typename B, typename D, typename... Arg>
+inline intrusive_ptr<B> make_slot_ptr(Arg&&... arg) {
+    return static_pointer_cast<B>(make_intrusive<D>(std::forward<Arg>(arg)...));
+}
+#endif
+
+#elif defined(SIGSLOT_USE_SLOT_POOL)
+/**
+ * @brief Thread-local memory pool for slot allocations
+ * 
+ * Two strategies available:
+ * 1. ARENA (SIGSLOT_USE_SLOT_POOL=2): Custom bump-pointer arena
+ *    - Fastest: ~5-10ns allocation
+ *    - No per-allocation bookkeeping
+ *    - Best for high connect/disconnect churn
+ * 
+ * 2. PMR (SIGSLOT_USE_SLOT_POOL=1): std::pmr::unsynchronized_pool_resource
+ *    - Portable: Standard C++17
+ *    - Good performance: ~20-30ns allocation
+ *    - Automatic memory management
+ */
+
+#if SIGSLOT_USE_SLOT_POOL == 2
+// Arena allocator strategy
+template<typename B, typename D, typename... Arg>
+inline std::shared_ptr<B> make_slot_ptr(Arg&&... arg) {
+    return std::static_pointer_cast<B>(
+        detail::make_shared_arena<D>(std::forward<Arg>(arg)...)
+    );
+}
+
+#else
+// PMR pool strategy
+struct slot_pool_holder {
+    std::pmr::unsynchronized_pool_resource pool;
+    
+    slot_pool_holder() : pool(std::pmr::pool_options{
+        .max_blocks_per_chunk = 32,      // Reasonable chunk size
+        .largest_required_pool_block = 256  // Most slots are < 256 bytes
+    }) {}
+    
+    std::pmr::memory_resource* get() noexcept { return &pool; }
+};
+
+inline std::pmr::memory_resource* get_slot_pool() {
+    thread_local slot_pool_holder holder;
+    return holder.get();
+}
+
+template<typename B, typename D, typename... Arg>
+inline std::shared_ptr<B> make_slot_ptr(Arg&&... arg) {
+    std::pmr::polymorphic_allocator<D> alloc(get_slot_pool());
+    return std::static_pointer_cast<B>(
+        std::allocate_shared<D>(alloc, std::forward<Arg>(arg)...)
+    );
+}
+#endif // SIGSLOT_USE_SLOT_POOL == 2
+
+#else // !SIGSLOT_USE_SLOT_POOL && !SIGSLOT_USE_INTRUSIVE_PTR
+
 /**
  * @brief std::make_shared instantiates a lot a templates, and makes both compilation time
  * and executable size far bigger than they need to be. We offer a make_shared
@@ -616,20 +714,26 @@ const T& cow_read(const std::shared_ptr<const T>& v) {
  */
 #ifdef SIGSLOT_REDUCE_COMPILE_TIME
 template<typename B, typename D, typename... Arg>
-inline std::shared_ptr<B> make_shared(Arg&&... arg) {
+inline std::shared_ptr<B> make_slot_ptr(Arg&&... arg) {
     return std::shared_ptr<B>(static_cast<B*>(new D(std::forward<Arg>(arg)...)));
 }
 #else
 template<typename B, typename D, typename... Arg>
-inline std::shared_ptr<B> make_shared(Arg&&... arg) {
+inline std::shared_ptr<B> make_slot_ptr(Arg&&... arg) {
     return std::static_pointer_cast<B>(std::make_shared<D>(std::forward<Arg>(arg)...));
 }
 #endif
 
+#endif // SIGSLOT_USE_INTRUSIVE_PTR / SIGSLOT_USE_SLOT_POOL
+
 /** @brief slot_state holds slot type independent state, to be used to interact with
  * slots indirectly through connection and scoped_connection objects.
  */
+#ifdef SIGSLOT_USE_INTRUSIVE_PTR
+class slot_state : public intrusive_refcount {
+#else
 class slot_state {
+#endif
 public:
     constexpr slot_state() noexcept
         : m_index(0)
@@ -692,6 +796,29 @@ private:
 
 } // namespace detail
 
+// Type aliases for pointer types based on configuration
+#ifdef SIGSLOT_USE_INTRUSIVE_PTR
+template<typename T>
+using slot_weak_ptr = detail::intrusive_weak_ptr<T>;
+template<typename T>
+using slot_strong_ptr = detail::intrusive_ptr<T>;
+
+template<typename T, typename U>
+inline slot_strong_ptr<T> slot_pointer_cast(const slot_strong_ptr<U>& ptr) {
+    return detail::static_pointer_cast<T>(ptr);
+}
+#else
+template<typename T>
+using slot_weak_ptr = std::weak_ptr<T>;
+template<typename T>
+using slot_strong_ptr = std::shared_ptr<T>;
+
+template<typename T, typename U>
+inline slot_strong_ptr<T> slot_pointer_cast(const slot_strong_ptr<U>& ptr) {
+    return std::static_pointer_cast<T>(ptr);
+}
+#endif
+
 /**
  * @brief connection_blocker is a RAII object that blocks a connection until destruction
  */
@@ -714,7 +841,7 @@ public:
 
 private:
     friend class connection;
-    explicit connection_blocker(std::weak_ptr<detail::slot_state> s) noexcept
+    explicit connection_blocker(slot_weak_ptr<detail::slot_state> s) noexcept
         : m_state{std::move(s)} {
         if (auto d = m_state.lock()) {
             d->block();
@@ -728,7 +855,7 @@ private:
     }
 
 private:
-    std::weak_ptr<detail::slot_state> m_state;
+    slot_weak_ptr<detail::slot_state> m_state;
 };
 
 
@@ -785,11 +912,11 @@ public:
 protected:
     template<GroupId, typename, typename...>
     friend class signal_base;
-    explicit connection(std::weak_ptr<detail::slot_state> s) noexcept
+    explicit connection(slot_weak_ptr<detail::slot_state> s) noexcept
         : m_state{std::move(s)} {}
 
     // NOLINTNEXTLINE(misc-non-private-member-variables-in-classes)
-    std::weak_ptr<detail::slot_state> m_state;
+    slot_weak_ptr<detail::slot_state> m_state;
 };
 
 /**
@@ -823,7 +950,7 @@ public:
 private:
     template<GroupId, typename, typename...>
     friend class signal_base;
-    explicit scoped_connection(std::weak_ptr<detail::slot_state> s) noexcept
+    explicit scoped_connection(slot_weak_ptr<detail::slot_state> s) noexcept
         : connection{std::move(s)} {}
 };
 
@@ -905,7 +1032,7 @@ template<typename Group, typename...>
 class slot_base;
 
 template<typename Group, typename... T>
-using slot_ptr = std::shared_ptr<slot_base<Group, T...>>;
+using slot_ptr = slot_strong_ptr<slot_base<Group, T...>>;
 
 
 /** @brief A base class for slot objects. This base type only depends on slot argument
@@ -1362,7 +1489,7 @@ public:
         using slot_t = detail::slot_extended<group_id, Callable, T...>;
         auto s = make_slot<slot_t>(std::forward<Callable>(c), gid);
         connection conn(s);
-        std::static_pointer_cast<slot_t>(s)->conn = conn;
+        slot_pointer_cast<slot_t>(s)->conn = conn;
         add_slot(std::move(s));
         return conn;
     }
@@ -1421,7 +1548,7 @@ public:
         using slot_t = detail::slot_pmf_extended<group_id, Pmf, Ptr, T...>;
         auto s = make_slot<slot_t>(std::forward<Pmf>(pmf), std::forward<Ptr>(ptr), gid);
         connection conn(s);
-        std::static_pointer_cast<slot_t>(s)->conn = conn;
+        slot_pointer_cast<slot_t>(s)->conn = conn;
         add_slot(std::move(s));
         return conn;
     }
@@ -1757,7 +1884,7 @@ private:
     // create a new slot
     template<typename Slot, typename... A>
     inline auto make_slot(A&&... a) {
-        return detail::make_shared<slot_base, Slot>(*this, std::forward<A>(a)...);
+        return detail::make_slot_ptr<slot_base, Slot>(*this, std::forward<A>(a)...);
     }
 
     // add the slot to the list of slots of the right group
