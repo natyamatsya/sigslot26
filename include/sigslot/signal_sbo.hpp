@@ -80,8 +80,8 @@ class sbo_container_improved {
     
     void destroy_stack_elements() noexcept {
         T* data = get_stack_data();
-        for (std::size_t i = 0; i < get_size(); ++i) {
-            data[i].~T();
+        for (std::size_t idx = 0; idx < get_size(); ++idx) {
+            data[idx].~T();
         }
     }
     
@@ -108,8 +108,8 @@ public:
             // Matches libstdc++ std::string _M_construct with small string optimization
             const T* src = other.get_stack_data();
             T* dst = get_stack_data();
-            for (std::size_t i = 0; i < other.get_size(); ++i) {
-                new (&dst[i]) T(src[i]);  // Placement new for stack elements
+            for (std::size_t idx = 0; idx < other.get_size(); ++idx) {
+                new (&dst[idx]) T(src[idx]);  // Placement new for stack elements
             }
             set_size(other.get_size(), false);
         }
@@ -129,8 +129,8 @@ public:
                 // Copy stack storage - placement new for each element
                 const T* src = other.get_stack_data();
                 T* dst = get_stack_data();
-                for (std::size_t i = 0; i < other.get_size(); ++i) {
-                    new (&dst[i]) T(src[i]);
+                for (std::size_t idx = 0; idx < other.get_size(); ++idx) {
+                    new (&dst[idx]) T(src[idx]);
                 }
                 set_size(other.get_size(), false);
             }
@@ -160,9 +160,9 @@ public:
             // Follows libstdc++ small string move semantics
             T* src = other.get_stack_data();
             T* dst = get_stack_data();
-            for (std::size_t i = 0; i < get_size(); ++i) {
-                new (&dst[i]) T(std::move(src[i]));
-                src[i].~T();  // Destroy moved-from element
+            for (std::size_t idx = 0; idx < get_size(); ++idx) {
+                new (&dst[idx]) T(std::move(src[idx]));
+                src[idx].~T();  // Destroy moved-from element
             }
         }
         other.set_size(0, false);  // Leave other in valid empty state
@@ -180,9 +180,9 @@ public:
             } else {
                 T* src = other.get_stack_data();
                 T* dst = get_stack_data();
-                for (std::size_t i = 0; i < get_size(); ++i) {
-                    new (&dst[i]) T(std::move(src[i]));
-                    src[i].~T();
+                for (std::size_t idx = 0; idx < get_size(); ++idx) {
+                    new (&dst[idx]) T(std::move(src[idx]));
+                    src[idx].~T();
                 }
             }
             other.set_size(0, false);
@@ -253,9 +253,9 @@ public:
             
             // Move existing elements to heap
             T* src = get_stack_data();
-            for (std::size_t i = 0; i < get_size(); ++i) {
-                new_heap.emplace_back(std::move(src[i]));
-                src[i].~T();
+            for (std::size_t idx = 0; idx < get_size(); ++idx) {
+                new_heap.emplace_back(std::move(src[idx]));
+                src[idx].~T();
             }
             
             new (&storage_.heap) std::vector<T>(std::move(new_heap));

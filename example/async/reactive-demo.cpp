@@ -242,7 +242,7 @@ public:
         });
 
         // Running statistics
-        exchange.tick_signal.connect([this](const Tick& t) { stats_updates_++; });
+        exchange.tick_signal.connect([this](const Tick&) { stats_updates_++; });
     }
 
     struct Stats {
