@@ -729,19 +729,41 @@ inline std::shared_ptr<B> make_slot_ptr(Arg&&... arg) {
 
 /** @brief slot_state holds slot type independent state, to be used to interact with
  * slots indirectly through connection and scoped_connection objects.
+ * 
+ * When SIGSLOT_USE_INTRUSIVE_PTR is enabled:
+ * - Inherits from intrusive_refcount for SBO storage performance
+ * - Stores a self-referencing shared_ptr for safe weak pointer support
  */
 #ifdef SIGSLOT_USE_INTRUSIVE_PTR
 class slot_state : public intrusive_refcount {
 #else
-class slot_state {
+class slot_state : public std::enable_shared_from_this<slot_state> {
 #endif
 public:
-    constexpr slot_state() noexcept
+    slot_state() noexcept
         : m_index(0)
         , m_connected(true)
         , m_blocked(false) {}
 
     virtual ~slot_state() = default;
+    
+    // Initialize the weak pointer anchor (called after construction)
+    void init_weak_anchor() {
+#ifdef SIGSLOT_USE_INTRUSIVE_PTR
+        // Create a shared_ptr with null deleter - it won't delete the object
+        // This provides a stable anchor for weak_ptrs
+        m_weak_anchor = std::shared_ptr<slot_state>(this, [](slot_state*){});
+#endif
+    }
+    
+    // Get a weak_ptr for connection objects
+    [[nodiscard]] std::weak_ptr<slot_state> get_weak_ptr() const noexcept {
+#ifdef SIGSLOT_USE_INTRUSIVE_PTR
+        return m_weak_anchor;
+#else
+        return const_cast<slot_state*>(this)->weak_from_this();
+#endif
+    }
 
     // memory_order_relaxed is safe here: we only need eventual consistency for
     // the connected flag. No synchronization with other memory operations required.
@@ -779,6 +801,9 @@ private:
     std::size_t m_index; // index into the array of slot pointers inside the signal
     std::atomic<bool> m_connected;
     std::atomic<bool> m_blocked;
+#ifdef SIGSLOT_USE_INTRUSIVE_PTR
+    std::shared_ptr<slot_state> m_weak_anchor;  // Anchor for weak_ptr support
+#endif
 };
 
 template<typename Group>
@@ -798,9 +823,11 @@ private:
 } // namespace detail
 
 // Type aliases for pointer types based on configuration
+// slot_weak_ptr ALWAYS uses std::weak_ptr for safe weak reference semantics
+// slot_strong_ptr uses intrusive_ptr when enabled for SBO performance
 #ifdef SIGSLOT_USE_INTRUSIVE_PTR
 template<typename T>
-using slot_weak_ptr = detail::intrusive_weak_ptr<T>;
+using slot_weak_ptr = std::weak_ptr<T>;  // Always use std::weak_ptr for safety
 template<typename T>
 using slot_strong_ptr = detail::intrusive_ptr<T>;
 
@@ -819,6 +846,12 @@ inline slot_strong_ptr<T> slot_pointer_cast(const slot_strong_ptr<U>& ptr) {
     return std::static_pointer_cast<T>(ptr);
 }
 #endif
+
+// Helper to get a weak_ptr from a slot for connection objects
+template<typename T>
+inline std::weak_ptr<detail::slot_state> get_slot_weak_ptr(const slot_strong_ptr<T>& ptr) {
+    return ptr->get_weak_ptr();
+}
 
 /**
  * @brief connection_blocker is a RAII object that blocks a connection until destruction
@@ -1469,7 +1502,7 @@ public:
     connection connect(Callable&& c, group_id gid = group_id{}) {
         using slot_t = detail::slot<group_id, Callable, T...>;
         auto s = make_slot<slot_t>(std::forward<Callable>(c), gid);
-        connection conn(s);
+        connection conn(get_slot_weak_ptr(s));
         add_slot(std::move(s));
         return conn;
     }
@@ -1489,7 +1522,7 @@ public:
     connection connect_extended(Callable&& c, group_id gid = group_id{}) {
         using slot_t = detail::slot_extended<group_id, Callable, T...>;
         auto s = make_slot<slot_t>(std::forward<Callable>(c), gid);
-        connection conn(s);
+        connection conn(get_slot_weak_ptr(s));
         slot_pointer_cast<slot_t>(s)->conn = conn;
         add_slot(std::move(s));
         return conn;
@@ -1509,7 +1542,7 @@ public:
     connection connect(Pmf&& pmf, Ptr&& ptr, group_id gid = group_id{}) {
         using slot_t = detail::slot_pmf<group_id, Pmf, Ptr, T...>;
         auto s = make_slot<slot_t>(std::forward<Pmf>(pmf), std::forward<Ptr>(ptr), gid);
-        connection conn(s);
+        connection conn(get_slot_weak_ptr(s));
         add_slot(std::move(s));
         ptr->add_connection(conn);
         return conn;
@@ -1529,7 +1562,7 @@ public:
     connection connect(Pmf&& pmf, Ptr&& ptr, group_id gid = group_id{}) {
         using slot_t = detail::slot_pmf<group_id, Pmf, Ptr, T...>;
         auto s = make_slot<slot_t>(std::forward<Pmf>(pmf), std::forward<Ptr>(ptr), gid);
-        connection conn(s);
+        connection conn(get_slot_weak_ptr(s));
         add_slot(std::move(s));
         return conn;
     }
@@ -1548,7 +1581,7 @@ public:
     connection connect_extended(Pmf&& pmf, Ptr&& ptr, group_id gid = group_id{}) {
         using slot_t = detail::slot_pmf_extended<group_id, Pmf, Ptr, T...>;
         auto s = make_slot<slot_t>(std::forward<Pmf>(pmf), std::forward<Ptr>(ptr), gid);
-        connection conn(s);
+        connection conn(get_slot_weak_ptr(s));
         slot_pointer_cast<slot_t>(s)->conn = conn;
         add_slot(std::move(s));
         return conn;
@@ -1578,7 +1611,7 @@ public:
         auto w = to_weak(std::forward<Ptr>(ptr));
         using slot_t = detail::slot_pmf_tracked<group_id, Pmf, decltype(w), T...>;
         auto s = make_slot<slot_t>(std::forward<Pmf>(pmf), w, gid);
-        connection conn(s);
+        connection conn(get_slot_weak_ptr(s));
         add_slot(std::move(s));
         return conn;
     }
@@ -1607,7 +1640,7 @@ public:
         auto w = to_weak(std::forward<Trackable>(ptr));
         using slot_t = detail::slot_tracked<group_id, Callable, decltype(w), T...>;
         auto s = make_slot<slot_t>(std::forward<Callable>(c), w, gid);
-        connection conn(s);
+        connection conn(get_slot_weak_ptr(s));
         add_slot(std::move(s));
         return conn;
     }
@@ -1885,7 +1918,9 @@ private:
     // create a new slot
     template<typename Slot, typename... A>
     inline auto make_slot(A&&... a) {
-        return detail::make_slot_ptr<slot_base, Slot>(*this, std::forward<A>(a)...);
+        auto s = detail::make_slot_ptr<slot_base, Slot>(*this, std::forward<A>(a)...);
+        s->init_weak_anchor();  // Initialize weak pointer support
+        return s;
     }
 
     // add the slot to the list of slots of the right group
