@@ -20,7 +20,7 @@
 // Options: ARENA (fastest), PMR (portable), or undefined (default allocator)
 #ifdef SIGSLOT_USE_SLOT_POOL
     #if SIGSLOT_USE_SLOT_POOL == 2
-        #include "slot_arena.hpp"  // Custom arena allocator
+        #include "slot-arena.hpp"  // Custom arena allocator
     #else
         #include <memory_resource>  // std::pmr
     #endif
@@ -29,10 +29,10 @@
 // Optional: Use intrusive reference counting instead of shared_ptr
 // Enables arena allocation without cross-thread issues
 #ifdef SIGSLOT_USE_INTRUSIVE_PTR
-    #include "intrusive_ptr.hpp"
+    #include "intrusive-ptr.hpp"
 #endif
 
-#include "signal_sbo.hpp"
+#include "signal-sbo.hpp"
 
 // Cache line size for preventing false sharing between threads.
 // When multiple threads access adjacent memory locations, they may experience

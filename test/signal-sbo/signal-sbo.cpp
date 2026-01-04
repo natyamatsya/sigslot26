@@ -1,6 +1,6 @@
 // Test SBO container implementation
 #include <catch2/catch_test_macros.hpp>
-#include <sigslot/signal_sbo.hpp>
+#include <sigslot/signal-sbo.hpp>
 #include <string>
 #include <memory>
 

@@ -6,7 +6,7 @@
 #include <thread>
 #include <atomic>
 #include <array>
-#include "support/test_repeat.hpp"
+#include "support/test-repeat.hpp"
 
 // Test configuration constants
 namespace {

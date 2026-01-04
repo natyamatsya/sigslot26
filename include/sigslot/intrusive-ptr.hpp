@@ -5,7 +5,7 @@
 #include <atomic>
 #include <cstddef>
 #include <utility>
-#include <sigslot/slot_arena.hpp>
+#include <sigslot/slot-arena.hpp>
 
 namespace sigslot::detail {
 

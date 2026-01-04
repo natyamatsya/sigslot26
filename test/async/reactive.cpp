@@ -9,8 +9,8 @@
 #include <thread>
 #include <chrono>
 #include <semaphore>
-#include "../support/test_repeat.hpp"
-#include "../support/thread_pool_fixture.hpp"
+#include "../support/test-repeat.hpp"
+#include "../support/thread-pool-fixture.hpp"
 
 using namespace std::chrono_literals;
 

@@ -2,11 +2,11 @@
 // These tests help investigate and verify correctness of Phase 4 optimizations
 
 #include <catch2/catch_test_macros.hpp>
-#include <sigslot/intrusive_ptr.hpp>
-#include <sigslot/slot_arena.hpp>
+#include <sigslot/intrusive-ptr.hpp>
+#include <sigslot/slot-arena.hpp>
 #include <thread>
 #include <vector>
-#include "support/test_repeat.hpp"
+#include "support/test-repeat.hpp"
 
 using namespace sigslot::detail;
 

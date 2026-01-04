@@ -4,7 +4,7 @@
 #pragma once
 
 #include <sigslot/signal.hpp>
-#include <sigslot/signal_sbo.hpp>
+#include <sigslot/signal-sbo.hpp>
 
 namespace sigslot {
 

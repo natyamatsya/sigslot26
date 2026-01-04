@@ -16,7 +16,7 @@
 #include <vector>
 #include <exec/static_thread_pool.hpp>
 #include <sigslot/async/coroutine.hpp>
-#include "../support/test_repeat.hpp"
+#include "../support/test-repeat.hpp"
 
 // =============================================================================
 // Basic Sender Tests

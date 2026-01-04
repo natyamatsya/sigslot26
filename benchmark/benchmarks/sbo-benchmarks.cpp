@@ -1,6 +1,6 @@
 // SBO-specific benchmarks
 #include <benchmark/benchmark.h>
-#include <sigslot/signal_sbo.hpp>
+#include <sigslot/signal-sbo.hpp>
 #include <sigslot/signal.hpp>
 
 // Simple SBO signal test for now (we'll integrate with real signal later)

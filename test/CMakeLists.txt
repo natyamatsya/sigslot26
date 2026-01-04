@@ -21,11 +21,11 @@ endif()
 if(EXISTS ${CMAKE_CURRENT_SOURCE_DIR}/signal-performance/CMakeLists.txt)
     add_subdirectory(signal-performance)
 endif()
-add_subdirectory(signal_sbo)
+add_subdirectory(signal-sbo)
 
 # Option to repeat async tests (useful for catching flaky race conditions in CI)
 # This defines a compile-time constant used by the test framework
-set(SIGSLOT_ASYNC_TEST_REPEAT 1 CACHE STRING "Number of times to repeat async tests (default: 1)")
+set(SIGSLOT_ASYNC_test-repeat 1 CACHE STRING "Number of times to repeat async tests (default: 1)")
 
 # Option to configure shared thread pool size for execution tests
 set(SIGSLOT_TEST_POOL_SIZE 4 CACHE STRING "Thread pool size for execution tests (default: 4)")
@@ -44,7 +44,7 @@ macro(pal_create_test target ut)
     if(target MATCHES "async|threaded")
         # Pass repeat count and pool size as compile definitions
         target_compile_definitions(${target} PRIVATE 
-            SIGSLOT_TEST_REPEAT=${SIGSLOT_ASYNC_TEST_REPEAT}
+            SIGSLOT_test-repeat=${SIGSLOT_ASYNC_test-repeat}
             SIGSLOT_TEST_POOL_SIZE=${SIGSLOT_TEST_POOL_SIZE})
         catch_discover_tests(${target} PROPERTIES TIMEOUT 60)
     else()

@@ -8,7 +8,7 @@
 
 // Include actual signal types to get real sizes
 #include <sigslot/signal.hpp>
-#include <sigslot/intrusive_ptr.hpp>
+#include <sigslot/intrusive-ptr.hpp>
 
 // Try to include nlohmann/json, fallback to simple output if not available
 #ifdef HAS_NLOHMANN_JSON
