@@ -106,6 +106,188 @@ For reactive pipelines emitting many values in sequence.
 
 ---
 
+### Phase 4: Connection Path Optimization
+
+The Phase 2 RCU implementation improved emission latency by 35% but introduced
+regression in the connection path (64.6 ns → 160 ns baseline). Phase 4 focuses
+on recovering this overhead.
+
+#### 4.1 Slot Memory Pool
+**Status**: Proposed  
+**Impact**: High  
+**Effort**: Medium
+
+**Problem**: Each `connect()` calls `std::make_shared<slot_t>()` which:
+1. Allocates control block (~32 bytes)
+2. Allocates slot object (~48-64 bytes depending on callable)
+3. Two separate allocations = poor cache locality
+
+**Solution**: Thread-local memory pool for slot allocations.
+
+```cpp
+// Pool allocator using std::pmr or custom implementation
+template<typename Slot>
+class slot_pool {
+    // Pre-allocated chunks of slot-sized memory
+    std::pmr::monotonic_buffer_resource m_buffer;
+    std::pmr::pool_options m_options{.max_blocks_per_chunk = 64};
+    
+public:
+    template<typename... Args>
+    std::shared_ptr<Slot> allocate(Args&&... args) {
+        // Allocate from pool, ~10ns vs ~100ns for make_shared
+        auto* mem = m_buffer.allocate(sizeof(Slot), alignof(Slot));
+        return std::shared_ptr<Slot>(
+            new(mem) Slot(std::forward<Args>(args)...),
+            [this](Slot* p) { p->~Slot(); m_buffer.deallocate(p, sizeof(Slot)); }
+        );
+    }
+};
+
+// Thread-local pool avoids contention
+inline thread_local slot_pool<slot_base> tls_slot_pool;
+```
+
+**Expected Impact**: Reduce connect latency by 50-70% (target: <80ns)
+
+**Considerations**:
+- Thread-local pools avoid contention but use more memory
+- Pool fragmentation for varying slot sizes (callable capture size)
+- Integration with existing `make_slot` infrastructure
+
+#### 4.2 Intrusive Reference Counting
+**Status**: Research  
+**Impact**: High  
+**Effort**: High
+
+**Problem**: `std::shared_ptr` has inherent overhead:
+1. Separate control block allocation
+2. Two atomic operations per copy (strong + weak count)
+3. Virtual destructor indirection
+
+**Solution**: Intrusive reference counting eliminates control block.
+
+```cpp
+// Base class with embedded reference count
+class intrusive_slot_base {
+    mutable std::atomic<std::size_t> m_refcount{1};
+    
+public:
+    void add_ref() const noexcept {
+        m_refcount.fetch_add(1, std::memory_order_relaxed);
+    }
+    
+    void release() const noexcept {
+        if (m_refcount.fetch_sub(1, std::memory_order_acq_rel) == 1) {
+            delete this;
+        }
+    }
+};
+
+// Smart pointer that works with intrusive types
+template<typename T>
+class intrusive_ptr {
+    T* m_ptr = nullptr;
+public:
+    // ~8 bytes vs 16 bytes for shared_ptr
+    // No control block allocation
+    // Single atomic per copy
+};
+```
+
+**Expected Impact**: 
+- Reduce slot memory from ~80 bytes to ~48 bytes
+- Faster copy operations (single atomic vs two)
+- Better cache locality
+
+**Trade-offs**:
+- Requires base class modification (breaking change for custom slots)
+- No weak_ptr equivalent (connection handles need redesign)
+- More complex implementation
+
+#### 4.3 Connection Handle Optimization
+**Status**: Proposed  
+**Impact**: Medium  
+**Effort**: Medium
+
+**Problem**: Current `connection` holds `std::weak_ptr<slot_base>`:
+- 16 bytes storage
+- Requires atomic operations to lock/check validity
+- Control block must outlive all weak_ptrs
+
+**Solution**: Index-based connection handles.
+
+```cpp
+// Lightweight connection handle
+class connection {
+    signal_base* m_signal;      // 8 bytes
+    std::uint32_t m_slot_id;    // 4 bytes (unique ID, not index)
+    std::uint32_t m_generation; // 4 bytes (ABA protection)
+    // Total: 16 bytes, no allocation, no atomics for storage
+    
+public:
+    bool connected() const {
+        return m_signal && m_signal->has_slot(m_slot_id, m_generation);
+    }
+    
+    void disconnect() {
+        if (m_signal) m_signal->remove_slot(m_slot_id);
+    }
+};
+```
+
+**Expected Impact**:
+- Zero allocation for connection objects
+- Faster validity checks (no weak_ptr lock)
+- Smaller memory footprint
+
+**Trade-offs**:
+- Requires slot ID management in signal
+- Generation counter needed for ABA safety
+- Breaking change for connection API
+
+#### 4.4 Lazy Slot Cleanup
+**Status**: ❌ **Blocked** (API incompatibility)  
+**Impact**: Medium  
+**Effort**: Low
+
+**Problem**: Disconnection triggers immediate COW + cleanup:
+1. Lock mutex
+2. Copy entire slot vector
+3. Remove slot
+4. Publish atomically
+
+**Attempted Solution**: Mark slots as "tombstoned" and batch cleanup during connect().
+
+**Finding**: This approach is **incompatible with the current API**:
+- `connection::valid()` checks if `weak_ptr` is still valid
+- With lazy cleanup, the slot stays in the container (just marked disconnected)
+- This keeps the `weak_ptr` valid, breaking `IsDisconnected()` checks
+- Tests like `REQUIRE_THAT(conn, IsDisconnected())` fail
+
+**Resolution Options**:
+1. **Breaking change**: Redefine `valid()` to check `connected()` instead of weak_ptr validity
+2. **Alternative design**: Keep immediate removal but optimize the COW path
+3. **Defer**: Focus on other optimizations (4.1 Slot Memory Pool) first
+
+**Recommendation**: Pursue 4.1 (Slot Memory Pool) instead - it's non-breaking and addresses
+the larger connect regression.
+
+---
+
+### Phase 5: Advanced Optimizations (Future)
+
+#### 5.1 Compile-Time Connections
+For static slot configurations known at compile time.
+
+#### 5.2 SIMD Emission
+Vectorized slot invocation for trivial callables.
+
+#### 5.3 Lock-Free Connect/Disconnect
+Full lock-free implementation using CAS loops.
+
+---
+
 ## Why Not Hazard Pointers?
 
 We evaluated hazard pointers (Folly, libcds, C++26 std::hazard_pointer) but
