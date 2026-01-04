@@ -22,6 +22,7 @@ option(SIGSLOT_COMPILE_TESTS "Compile tests" ON)
 option(SIGSLOT_RUN_TESTS "Compile and run tests" OFF)
 option(SIGSLOT_REDUCE_COMPILE_TIME "Attempt at reducing code size and compilation time" OFF)
 option(SIGSLOT_ENABLE_STDEXEC "Enable std::execution support via NVIDIA stdexec" ON)
+option(SIGSLOT_ENABLE_BENCHMARK "Enable Google Benchmark support" OFF)
 
 find_package(Threads REQUIRED)
 
@@ -178,4 +179,9 @@ if(DOXYGEN_FOUND)
 else()
     message(STATUS "Doxygen not found - documentation target disabled")
     message(STATUS "  Install Doxygen: brew install doxygen")
+endif()
+
+### Google Benchmark support
+if(SIGSLOT_ENABLE_BENCHMARK)
+    add_subdirectory(benchmark)
 endif()

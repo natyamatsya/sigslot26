@@ -1,0 +1,7 @@
+# Benchmark targets
+
+add_executable(signal_benchmarks signal_benchmarks.cpp)
+target_link_libraries(signal_benchmarks PRIVATE sigslot_benchmark)
+
+add_executable(threaded_benchmarks threaded_benchmarks.cpp)
+target_link_libraries(threaded_benchmarks PRIVATE sigslot_benchmark)
