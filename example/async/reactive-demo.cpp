@@ -183,7 +183,9 @@ public:
         std::normal_distribution<> price_dist(0.0, volatility_);
 
         while (!done) {
-            // HFT burst: emit 100 ticks rapidly, then yield briefly
+            // HFT burst: emit 100 ticks rapidly using batch emission
+            // Batch emission caches the slot snapshot, avoiding repeated atomic loads
+            auto batch = tick_signal.batch();
             for (int burst = 0; burst < 100 && !done; ++burst) {
                 // Combine stock-specific noise with market-wide factor
                 double stock_noise = price_dist(gen);
@@ -192,7 +194,7 @@ public:
                 price_ = std::max(0.01, price_ * (1.0 + change / 100.0));
 
                 Tick tick{symbol_, price_, std::chrono::steady_clock::now(), ++sequence_};
-                tick_signal(tick);
+                batch.emit(tick);
             }
             // Brief yield to allow other threads
             std::this_thread::yield();

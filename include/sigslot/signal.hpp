@@ -1466,6 +1466,83 @@ public:
     }
 
     /**
+     * @brief RAII batch emitter for optimized sequential emissions
+     * 
+     * Caches the slot snapshot to avoid repeated atomic loads during
+     * rapid sequential emissions. Ideal for reactive pipelines.
+     * 
+     * Usage:
+     * @code
+     *   {
+     *       auto batch = sig.batch();
+     *       for (int i = 0; i < 1000; ++i) {
+     *           batch.emit(i);  // Uses cached snapshot
+     *       }
+     *   }
+     * @endcode
+     */
+    class batch_emitter {
+        cow_copy_type<list_type> m_snapshot;
+        const std::atomic<bool>* m_block;
+        
+    public:
+        explicit batch_emitter(cow_copy_type<list_type> snapshot, const std::atomic<bool>& block)
+            : m_snapshot(std::move(snapshot)), m_block(&block) {}
+        
+        batch_emitter(const batch_emitter&) = delete;
+        batch_emitter& operator=(const batch_emitter&) = delete;
+        batch_emitter(batch_emitter&&) = default;
+        batch_emitter& operator=(batch_emitter&&) = default;
+        
+        /**
+         * @brief Emit a value using the cached snapshot
+         */
+        template<typename... U>
+        void emit(U&&... a) const {
+            if (m_block->load(std::memory_order_relaxed)) {
+                return;
+            }
+            
+            for (const auto& group : detail::cow_read(m_snapshot)) {
+                if (!group.is_using_heap()) {
+                    for (const auto& s : group.get_slots_span()) {
+                        s->operator()(std::forward<U>(a)...);
+                    }
+                } else {
+                    for (const auto& s : group.slts) {
+                        s->operator()(std::forward<U>(a)...);
+                    }
+                }
+            }
+        }
+        
+        /**
+         * @brief Emit a value (operator() alias for emit())
+         */
+        template<typename... U>
+        void operator()(U&&... a) const {
+            emit(std::forward<U>(a)...);
+        }
+    };
+    
+    /**
+     * @brief Create a batch emitter for optimized sequential emissions
+     * 
+     * Returns an RAII object that caches the slot snapshot. Multiple
+     * emissions through the batch emitter avoid repeated atomic loads,
+     * improving throughput for reactive pipelines.
+     * 
+     * The snapshot is consistent for the lifetime of the batch_emitter.
+     * New connections made after batch() is called won't be visible.
+     * 
+     * @return batch_emitter object for emitting values
+     */
+    template<typename Self>
+    [[nodiscard]] auto batch(this Self&& self) {
+        return batch_emitter(std::forward<Self>(self).slots_reference(), self.m_block);
+    }
+
+    /**
      * @brief Connect a callable of compatible arguments
      *
      * Effect: Creates and stores a new slot responsible for executing the

@@ -706,3 +706,54 @@ TEST_CASE("Loop", "[signal]") {
     REQUIRE(i1.val() == 1);
     REQUIRE(i2.val() == 1);
 }
+
+TEST_CASE("Batch emission", "[signal][batch]") {
+    sum = 0;
+    sigslot::signal<int> sig;
+    sig.connect([](int i) { sum += i; });
+    
+    SECTION("batch emit multiple values") {
+        {
+            auto batch = sig.batch();
+            for (int i = 1; i <= 10; ++i) {
+                batch.emit(i);
+            }
+        }
+        REQUIRE(sum == 55);  // 1+2+...+10 = 55
+    }
+    
+    SECTION("batch operator() alias") {
+        {
+            auto batch = sig.batch();
+            batch(5);
+            batch(10);
+            batch(15);
+        }
+        REQUIRE(sum == 30);
+    }
+    
+    SECTION("batch respects blocking") {
+        sig.block();
+        {
+            auto batch = sig.batch();
+            batch.emit(100);
+        }
+        REQUIRE(sum == 0);
+        
+        sig.unblock();
+        {
+            auto batch = sig.batch();
+            batch.emit(42);
+        }
+        REQUIRE(sum == 42);
+    }
+    
+    SECTION("batch snapshot consistency") {
+        // Connections made after batch() won't be visible
+        auto batch = sig.batch();
+        sig.connect([](int i) { sum += i * 2; });  // Added after batch
+        
+        batch.emit(10);
+        REQUIRE(sum == 10);  // Only original slot called, not the new one
+    }
+}
