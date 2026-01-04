@@ -3,6 +3,13 @@
 
 #pragma once
 
+#include <version>  // For feature test macros
+
+// Require C++23 std::expected support
+#if !defined(__cpp_lib_expected) || __cpp_lib_expected < 202202L
+#error "C++23 std::expected is required. Use a modern compiler with full C++23 library support (e.g., GCC 14+, Clang 18 with libc++, MSVC 19.33+)."
+#endif
+
 #include <span>
 #include <array>
 #include <vector>

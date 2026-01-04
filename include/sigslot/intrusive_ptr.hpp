@@ -236,7 +236,7 @@ public:
         if (expired()) {
             return intrusive_ptr<T>();
         }
-        return intrusive_ptr<T>(ptr_);
+        return intrusive_ptr<T>(ptr_, true);  // Must increment refcount!
     }
     
     void reset() noexcept {

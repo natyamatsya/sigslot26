@@ -34,7 +34,7 @@ jobs:
           - {name: "Windows MSVC", os: windows-latest, cc: "cl", cxx: "cl"}
           - {name: "Windows clang-cl", os: windows-latest, cc: "clang-cl", cxx: "clang-cl"}
           - {name: "Ubuntu gcc", os: ubuntu-latest, cc: "gcc-14", cxx: "g++-14"}
-          - {name: "Ubuntu clang", os: ubuntu-latest, cc: "clang-18", cxx: "clang++-18"}
+          - {name: "Ubuntu clang", os: ubuntu-latest, cc: "clang-20", cxx: "clang++-20"}
           - {name: "MacOS apple-clang", os: macos-latest, cc: "clang", cxx: "clang++"}
 
     steps:
@@ -49,9 +49,13 @@ jobs:
         if: startsWith(matrix.config.name, 'Ubuntu')
         shell: bash
         run: |
+          # Add LLVM apt repository for clang-20
+          wget -qO- https://apt.llvm.org/llvm-snapshot.gpg.key | sudo tee /etc/apt/trusted.gpg.d/apt.llvm.org.asc
+          echo "deb http://apt.llvm.org/noble/ llvm-toolchain-noble-20 main" | sudo tee /etc/apt/sources.list.d/llvm.list
           sudo apt-get update
           sudo apt-get install -y \
-            llvm-18 clang-18 libclang-18-dev clang-tidy-18 \
+            llvm-20 clang-20 libclang-20-dev clang-tidy-20 \
+            libc++-20-dev libc++abi-20-dev \
             gcc-14 g++-14
 
       - name: Install Qt
@@ -160,7 +164,10 @@ jobs:
           if [[ "${{ matrix.config.name }}" == "Ubuntu gcc" ]]; then
             # GCC: Use both ThreadSanitizer and UBSan
             cmake $GITHUB_WORKSPACE -DCMAKE_BUILD_TYPE=$BUILD_TYPE -DSIGSLOT_SANITIZE_THREAD=ON -DSIGSLOT_SANITIZE_UNDEFINED=ON $FETCH_FLAG $REPEAT_FLAG $INTRUSIVE_FLAG -G Ninja -Wno-dev
-          elif [[ "${{ matrix.config.name }}" == "Ubuntu clang" || "${{ matrix.config.name }}" == "MacOS apple-clang" ]]; then
+          elif [[ "${{ matrix.config.name }}" == "Ubuntu clang" ]]; then
+            # Clang with libc++ for full C++23 support (std::expected)
+            cmake $GITHUB_WORKSPACE -DCMAKE_BUILD_TYPE=$BUILD_TYPE -DCMAKE_CXX_FLAGS="-stdlib=libc++" -DSIGSLOT_SANITIZE_THREAD=ON $FETCH_FLAG $REPEAT_FLAG $INTRUSIVE_FLAG -G Ninja -Wno-dev
+          elif [[ "${{ matrix.config.name }}" == "MacOS apple-clang" ]]; then
             # Clang: Use only ThreadSanitizer (UBSan+TSan causes stdexec hangs)
             cmake $GITHUB_WORKSPACE -DCMAKE_BUILD_TYPE=$BUILD_TYPE -DSIGSLOT_SANITIZE_THREAD=ON $FETCH_FLAG $REPEAT_FLAG $INTRUSIVE_FLAG -G Ninja -Wno-dev
           else
