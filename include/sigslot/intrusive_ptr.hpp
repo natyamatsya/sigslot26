@@ -27,8 +27,10 @@ class intrusive_refcount {
     
 protected:
     intrusive_refcount() noexcept = default;
-    intrusive_refcount(const intrusive_refcount&) noexcept : m_refcount(0), m_arena_allocated(false) {}
-    intrusive_refcount& operator=(const intrusive_refcount&) noexcept { return *this; }
+    // NOLINTNEXTLINE(hicpp-named-parameter,readability-named-parameter)
+    intrusive_refcount(const intrusive_refcount& /*unused*/) noexcept : m_refcount(0), m_arena_allocated(false) {}
+    // NOLINTNEXTLINE(cert-oop54-cpp) - intentionally ignores source, refcount is not copied
+    intrusive_refcount& operator=(const intrusive_refcount& /*unused*/) noexcept { return *this; }
     
     /**
      * @brief Override to customize destruction behavior
