@@ -765,7 +765,11 @@ public:
         , m_connected(true)
         , m_blocked(false) {}
 
+#ifdef SIGSLOT_USE_INTRUSIVE_PTR
     ~slot_state() override = default;
+#else
+    virtual ~slot_state() = default;
+#endif
     
     // Initialize the weak pointer anchor (called after construction)
     void init_weak_anchor() {
