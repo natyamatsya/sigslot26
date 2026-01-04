@@ -58,10 +58,15 @@ add_library(Sigslot_AddressSanitizer INTERFACE)
 target_compile_options(Sigslot_AddressSanitizer INTERFACE
     $<$<BOOL:${SIGSLOT_COMPILER_CLANG_OR_GCC}>:
         -g;-fno-omit-frame-pointer;-fsanitize=address;-fsanitize-address-use-after-scope>
+    $<$<BOOL:${SIGSLOT_COMPILER_MSVC}>:/fsanitize=address>
 )
 target_link_libraries(Sigslot_AddressSanitizer INTERFACE
     $<$<BOOL:${SIGSLOT_COMPILER_CLANG_OR_GCC}>:-fsanitize=address>
 )
+# For MSVC, also add ASAN to global flags so FetchContent dependencies get it too
+if(SIGSLOT_COMPILER_MSVC AND SIGSLOT_SANITIZE_ADDRESS)
+    add_compile_options(/fsanitize=address)
+endif()
 
 add_library(Sigslot_ThreadSanitizer INTERFACE)
 target_compile_options(Sigslot_ThreadSanitizer INTERFACE

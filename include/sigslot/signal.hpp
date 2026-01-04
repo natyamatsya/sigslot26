@@ -1619,8 +1619,14 @@ private:
     // Align m_block to its own cache line to prevent false sharing.
     // This ensures that concurrent reads of m_block don't cause cache
     // invalidations when m_mutex or m_slots are modified by other threads.
+    // Note: Disabled on MSVC+ASAN - alignas breaks PMF comparison.
+    //       Reproduced with VS2022 (17.14) and VS2026 (18.x) + AddressSanitizer.
     // See: https://en.cppreference.com/w/cpp/language/alignas
+#if defined(_MSC_VER) && !defined(__clang__) && defined(__SANITIZE_ADDRESS__)
+    std::atomic<bool> m_block;
+#else
     alignas(sigslot_cache_line_size) std::atomic<bool> m_block;
+#endif
 };
 
 /**
