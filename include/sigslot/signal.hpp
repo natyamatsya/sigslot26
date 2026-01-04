@@ -641,6 +641,7 @@ inline intrusive_ptr<B> make_slot_ptr(Arg&&... arg) {
     auto& arena = get_slot_arena();
     void* mem = arena.allocate(sizeof(D), alignof(D));
     D* ptr = new(mem) D(std::forward<Arg>(arg)...);
+    ptr->set_arena_allocated(); // Mark so destructor doesn't call delete
     return intrusive_ptr<B>(static_cast<B*>(ptr), true);
 }
 #else

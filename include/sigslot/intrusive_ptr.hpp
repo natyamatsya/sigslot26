@@ -23,14 +23,12 @@ namespace sigslot::detail {
  */
 class intrusive_refcount {
     mutable std::atomic<std::size_t> m_refcount{0};
+    bool m_arena_allocated = false;
     
 protected:
     intrusive_refcount() noexcept = default;
-    intrusive_refcount(const intrusive_refcount&) noexcept : m_refcount(0) {}
+    intrusive_refcount(const intrusive_refcount&) noexcept : m_refcount(0), m_arena_allocated(false) {}
     intrusive_refcount& operator=(const intrusive_refcount&) noexcept { return *this; }
-    
-    // Custom destructor behavior for arena allocation
-    virtual void destroy() const { delete this; }
     
 public:
     virtual ~intrusive_refcount() = default;
@@ -41,13 +39,23 @@ public:
     
     void release_ref() const noexcept {
         if (m_refcount.fetch_sub(1, std::memory_order_acq_rel) == 1) {
-            destroy();
+            if (m_arena_allocated) {
+                // Arena allocation: call destructor but don't free memory
+                this->~intrusive_refcount();
+            } else {
+                // Heap allocation: normal delete
+                delete this;
+            }
         }
     }
     
     [[nodiscard]] std::size_t use_count() const noexcept {
         return m_refcount.load(std::memory_order_relaxed);
     }
+    
+    // Mark as arena-allocated (called by make_slot_ptr)
+    void set_arena_allocated() noexcept { m_arena_allocated = true; }
+    [[nodiscard]] bool is_arena_allocated() const noexcept { return m_arena_allocated; }
 };
 
 /**

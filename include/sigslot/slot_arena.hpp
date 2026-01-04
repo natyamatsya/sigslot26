@@ -123,13 +123,16 @@ public:
 };
 
 /**
- * @brief Thread-safe arena for slot allocations
+ * @brief Thread-local arena for slot allocations
  * 
- * Uses a mutex to protect the arena since shared_ptr control blocks
- * can be accessed from multiple threads.
+ * Each thread gets its own arena to avoid contention.
+ * This is safe for intrusive_ptr because:
+ * - Allocation happens on the thread that calls connect()
+ * - Deallocation just calls destructor (no free needed for arena)
+ * - The arena memory is reclaimed when the thread exits
  */
 inline slot_arena& get_slot_arena() {
-    static slot_arena arena;
+    thread_local slot_arena arena;
     return arena;
 }
 
