@@ -572,6 +572,32 @@ public:
     void publish(std::shared_ptr<T> new_data) {
         std::atomic_store_explicit(&m_published, std::move(new_data), std::memory_order_release);
     }
+    
+    /**
+     * @brief Lock-free CAS publish for concurrent writers.
+     * @param expected The snapshot we copied from (updated on failure)
+     * @param new_data The modified data to publish
+     * @return true if publish succeeded, false if expected was stale
+     * 
+     * This enables lock-free connect/disconnect by allowing multiple writers
+     * to race. On failure, expected is updated to the current value so the
+     * caller can retry with a fresh copy.
+     */
+    bool try_publish(std::shared_ptr<const T>& expected, std::shared_ptr<T> new_data) {
+        // Cast to non-const for the compare_exchange (we're replacing the whole ptr)
+        auto expected_nonconst = std::const_pointer_cast<T>(expected);
+        bool success = std::atomic_compare_exchange_strong_explicit(
+            &m_published,
+            &expected_nonconst,
+            std::move(new_data),
+            std::memory_order_acq_rel,
+            std::memory_order_acquire);
+        if (!success) {
+            // Update expected with current value for retry
+            expected = std::const_pointer_cast<const T>(expected_nonconst);
+        }
+        return success;
+    }
 
     friend inline void swap(rcu_cow& x, rcu_cow& y) noexcept {
         auto tmp = std::atomic_load_explicit(&x.m_published, std::memory_order_acquire);
@@ -1355,7 +1381,7 @@ private:
     template<typename U>
     using cow_copy_type = std::conditional_t<is_thread_safe, std::shared_ptr<const U>, const U&>;
 
-    using lock_type = std::unique_lock<Lockable>;
+    // Note: lock_type removed - all operations are now lock-free
     using slot_base = detail::slot_base<group_id, T...>;
     using slot_ptr = detail::slot_ptr<Group, T...>;
     using slots_type = detail::sbo_container<slot_ptr, 3>; // SBO for up to 3 slots
@@ -1379,21 +1405,19 @@ public:
     signal_base(const signal_base&) = delete;
     signal_base& operator=(const signal_base&) = delete;
 
-    // NOLINTNEXTLINE(hicpp-noexcept-move,performance-noexcept-move-constructor)
-    signal_base(signal_base&& o) /* not noexcept */
-        : m_block{o.m_block.load()} {
-        lock_type lock(o.m_mutex);
-        std::swap(m_slots, o.m_slots);
+    // Lock-free move constructor using RCU swap
+    signal_base(signal_base&& o) noexcept
+        : m_block{o.m_block.load(std::memory_order_relaxed)} {
+        swap(m_slots, o.m_slots);  // RCU atomic swap
     }
 
-    // NOLINTNEXTLINE(hicpp-noexcept-move,performance-noexcept-move-constructor)
-    signal_base& operator=(signal_base&& o) /* not noexcept */ {
-        lock_type lock1(m_mutex, std::defer_lock);
-        lock_type lock2(o.m_mutex, std::defer_lock);
-        std::lock(lock1, lock2);
-
-        std::swap(m_slots, o.m_slots);
-        m_block.store(o.m_block.exchange(m_block.load()));
+    // Lock-free move assignment using RCU swap
+    signal_base& operator=(signal_base&& o) noexcept {
+        if (this != &o) {
+            swap(m_slots, o.m_slots);  // RCU atomic swap
+            m_block.store(o.m_block.exchange(m_block.load(std::memory_order_relaxed), 
+                         std::memory_order_relaxed), std::memory_order_relaxed);
+        }
         return *this;
     }
 
@@ -1674,16 +1698,45 @@ public:
      * @return the number of disconnected slots
      */
     size_t disconnect(group_id gid) {
-        lock_type lock(m_mutex);
-        auto guard = detail::cow_write(m_slots);
-        for (auto& group : guard.get()) {
-            if (group.gid == gid) {
-                size_t count = group.slts.size();
-                group.slts.clear();
-                return count;
+        if constexpr (is_thread_safe) {
+            // Lock-free CAS loop
+            while (true) {
+                auto current = m_slots.read();
+                
+                size_t count = 0;
+                for (const auto& group : *current) {
+                    if (group.gid == gid) {
+                        count = group.slts.size();
+                        break;
+                    }
+                }
+                
+                if (count == 0) {
+                    return 0;
+                }
+                
+                auto new_groups = std::make_shared<list_type>(*current);
+                for (auto& group : *new_groups) {
+                    if (group.gid == gid) {
+                        group.slts.clear();
+                        break;
+                    }
+                }
+                
+                if (m_slots.try_publish(current, std::move(new_groups))) {
+                    return count;
+                }
             }
+        } else {
+            for (auto& group : m_slots) {
+                if (group.gid == gid) {
+                    size_t count = group.slts.size();
+                    group.slts.clear();
+                    return count;
+                }
+            }
+            return 0;
         }
-        return 0;
     }
 
     /**
@@ -1691,8 +1744,17 @@ public:
      * Safety: Thread safety depends on locking policy
      */
     void disconnect_all() {
-        lock_type lock(m_mutex);
-        clear();
+        if constexpr (is_thread_safe) {
+            while (true) {
+                auto current = m_slots.read();
+                auto new_groups = std::make_shared<list_type>();
+                if (m_slots.try_publish(current, std::move(new_groups))) {
+                    break;
+                }
+            }
+        } else {
+            m_slots.clear();
+        }
     }
 
     /**
@@ -1706,12 +1768,21 @@ public:
      * Safety: thread safe
      */
     void block(group_id const& gid) {
-        lock_type lock(m_mutex);
-        auto guard = detail::cow_write(m_slots);
-        for (auto& group : guard.get()) {
-            if (group.gid == gid) {
-                for (auto& slt : group.slts) {
-                    slt->block();
+        if constexpr (is_thread_safe) {
+            auto current = m_slots.read();
+            for (const auto& group : *current) {
+                if (group.gid == gid) {
+                    for (const auto& slt : group.slts) {
+                        slt->block();
+                    }
+                }
+            }
+        } else {
+            for (const auto& group : m_slots) {
+                if (group.gid == gid) {
+                    for (const auto& slt : group.slts) {
+                        slt->block();
+                    }
                 }
             }
         }
@@ -1728,12 +1799,21 @@ public:
      * Safety: thread safe
      */
     void unblock(group_id const& gid) {
-        lock_type lock(m_mutex);
-        auto guard = detail::cow_write(m_slots);
-        for (auto& group : guard.get()) {
-            if (group.gid == gid) {
-                for (auto& slt : group.slts) {
-                    slt->unblock();
+        if constexpr (is_thread_safe) {
+            auto current = m_slots.read();
+            for (const auto& group : *current) {
+                if (group.gid == gid) {
+                    for (const auto& slt : group.slts) {
+                        slt->unblock();
+                    }
+                }
+            }
+        } else {
+            for (const auto& group : m_slots) {
+                if (group.gid == gid) {
+                    for (const auto& slt : group.slts) {
+                        slt->unblock();
+                    }
                 }
             }
         }
@@ -1826,27 +1906,63 @@ public:
 
 protected:
     /**
-     * @brief remove disconnected slots
+     * @brief remove disconnected slots (lock-free)
      */
     void clean(detail::grouped_slot<Group>* state) override {
-        lock_type lock(m_mutex);
         const auto idx = state->index();
         const auto& gid = state->group();
-        auto guard = detail::cow_write(m_slots);
-
-        // find the group
-        for (auto& group : guard.get()) {
-            if (group.gid == gid) {
-                auto& slts = group.slts;
-
-                // ensure we have the right slot, in case of concurrent cleaning
-                if (idx < slts.size() && slts[idx] && slts[idx].get() == state) {
-                    std::swap(slts[idx], slts.back());
-                    slts[idx]->index() = idx;
-                    slts.pop_back();
+        
+        if constexpr (is_thread_safe) {
+            // Lock-free CAS loop
+            while (true) {
+                auto current = m_slots.read();
+                
+                bool found = false;
+                for (const auto& group : *current) {
+                    if (group.gid == gid) {
+                        const auto& slts = group.slts;
+                        if (idx < slts.size() && slts[idx] && slts[idx].get() == state) {
+                            found = true;
+                        }
+                        break;
+                    }
                 }
-
-                return;
+                
+                if (!found) {
+                    return;
+                }
+                
+                auto new_groups = std::make_shared<list_type>(*current);
+                for (auto& group : *new_groups) {
+                    if (group.gid == gid) {
+                        auto& slts = group.slts;
+                        if (idx < slts.size() && slts[idx] && slts[idx].get() == state) {
+                            std::swap(slts[idx], slts.back());
+                            if (idx < slts.size() - 1) {
+                                slts[idx]->index() = idx;
+                            }
+                            slts.pop_back();
+                        }
+                        break;
+                    }
+                }
+                
+                if (m_slots.try_publish(current, std::move(new_groups))) {
+                    return;
+                }
+            }
+        } else {
+            // Direct modification for non-thread-safe signals
+            for (auto& group : m_slots) {
+                if (group.gid == gid) {
+                    auto& slts = group.slts;
+                    if (idx < slts.size() && slts[idx] && slts[idx].get() == state) {
+                        std::swap(slts[idx], slts.back());
+                        slts[idx]->index() = idx;
+                        slts.pop_back();
+                    }
+                    return;
+                }
             }
         }
     }
@@ -1875,32 +1991,48 @@ private:
     void add_slot(slot_ptr&& s) {
         const group_id& gid = s->group();
 
-        lock_type lock(m_mutex);
-        auto groups_guard = detail::cow_write(m_slots);
-        auto& groups = groups_guard.get();
+        if constexpr (is_thread_safe) {
+            // Lock-free CAS loop for thread-safe signals
+            while (true) {
+                auto current = m_slots.read();
+                auto new_groups = std::make_shared<list_type>(*current);
+                
+                // find the group
+                std::size_t group_idx = 0;
+                while (group_idx < new_groups->size() && (*new_groups)[group_idx].gid < gid) {
+                    group_idx++;
+                }
 
-        // find the group
-        auto it = groups.begin();
-        while (it != groups.end() && it->gid < gid) {
-            it++;
-        }
+                // create a new group if necessary
+                if (group_idx == new_groups->size() || (*new_groups)[group_idx].gid != gid) {
+                    new_groups->insert(new_groups->begin() + static_cast<std::ptrdiff_t>(group_idx), 
+                                       {{}, gid});
+                }
 
-        // create a new group if necessary
-        if (it == groups.end() || it->gid != gid) {
-            it = groups.insert(it, {{}, gid});
-        }
-
-        // add the slot
-        s->index() = it->slts.size();
-        
-        // SBO-aware slot addition with optimization hint
-        if (!it->is_using_heap() && it->slts.size() < it->heap_threshold() - 1) {
-            // Fast path: still within SBO capacity, this will be stack allocation
-            it->slts.push_back(std::move(s));
+                // add the slot with correct index
+                auto& target_group = (*new_groups)[group_idx];
+                s->index() = target_group.slts.size();
+                target_group.slts.push_back(std::move(s));
+                
+                if (m_slots.try_publish(current, new_groups)) {
+                    break;  // Success!
+                }
+                
+                // CAS failed - retrieve slot and retry
+                s = std::move((*new_groups)[group_idx].slts.back());
+                (*new_groups)[group_idx].slts.pop_back();
+            }
         } else {
-            // Transition path: about to exceed SBO capacity or already on heap
+            // Direct modification for non-thread-safe signals
+            auto it = m_slots.begin();
+            while (it != m_slots.end() && it->gid < gid) {
+                it++;
+            }
+            if (it == m_slots.end() || it->gid != gid) {
+                it = m_slots.insert(it, {{}, gid});
+            }
+            s->index() = it->slts.size();
             it->slts.push_back(std::move(s));
-            // Could add metrics here to track SBO effectiveness
         }
     }
 
@@ -1956,39 +2088,90 @@ private:
     // disconnect a slot if a condition occurs
     template<typename Cond>
     size_t disconnect_if(Cond&& cond) {
-        lock_type lock(m_mutex);
-        auto groups_guard = detail::cow_write(m_slots);
-        auto& groups = groups_guard.get();
-
-        size_t count = 0;
-
-        for (auto& group : groups) {
-            auto& slts = group.slts;
-            size_t i = 0;
-            while (i < slts.size()) {
-                if (cond(slts[i])) {
-                    std::swap(slts[i], slts.back());
-                    slts[i]->index() = i;
-                    slts.pop_back();
-                    ++count;
-                } else {
-                    ++i;
+        if constexpr (is_thread_safe) {
+            // Lock-free CAS loop
+            while (true) {
+                auto current = m_slots.read();
+                
+                size_t count = 0;
+                for (const auto& group : *current) {
+                    for (const auto& slt : group.slts) {
+                        if (cond(slt)) {
+                            ++count;
+                        }
+                    }
+                }
+                
+                if (count == 0) {
+                    return 0;
+                }
+                
+                auto new_groups = std::make_shared<list_type>(*current);
+                size_t actual_count = 0;
+                
+                for (auto& group : *new_groups) {
+                    auto& slts = group.slts;
+                    size_t i = 0;
+                    while (i < slts.size()) {
+                        if (cond(slts[i])) {
+                            std::swap(slts[i], slts.back());
+                            if (i < slts.size() - 1) {
+                                slts[i]->index() = i;
+                            }
+                            slts.pop_back();
+                            ++actual_count;
+                        } else {
+                            ++i;
+                        }
+                    }
+                }
+                
+                if (m_slots.try_publish(current, std::move(new_groups))) {
+                    return actual_count;
                 }
             }
+        } else {
+            // Direct modification for non-thread-safe signals
+            size_t count = 0;
+            for (auto& group : m_slots) {
+                auto& slts = group.slts;
+                size_t i = 0;
+                while (i < slts.size()) {
+                    if (cond(slts[i])) {
+                        std::swap(slts[i], slts.back());
+                        slts[i]->index() = i;
+                        slts.pop_back();
+                        ++count;
+                    } else {
+                        ++i;
+                    }
+                }
+            }
+            return count;
         }
-
-        return count;
     }
 
-    // to be called under lock: remove all the slots
-    void clear() { detail::cow_write(m_slots).get().clear(); }
+    // Helper to clear all slots
+    void clear() {
+        if constexpr (is_thread_safe) {
+            while (true) {
+                auto current = m_slots.read();
+                auto new_groups = std::make_shared<list_type>();
+                if (m_slots.try_publish(current, std::move(new_groups))) {
+                    break;
+                }
+            }
+        } else {
+            m_slots.clear();
+        }
+    }
 
 private:
-    Lockable m_mutex;
+    // Note: m_mutex removed - all operations are now lock-free using CAS on m_slots
     cow_type<list_type> m_slots;
     // Align m_block to its own cache line to prevent false sharing.
     // This ensures that concurrent reads of m_block don't cause cache
-    // invalidations when m_mutex or m_slots are modified by other threads.
+    // invalidations when m_slots is modified by other threads.
     // Note: Disabled on MSVC+ASAN - alignas breaks PMF comparison.
     //       Reproduced with VS2022 (17.14) and VS2026 (18.x) + AddressSanitizer.
     // See: https://en.cppreference.com/w/cpp/language/alignas
