@@ -1,0 +1,125 @@
+{
+  "context": {
+    "date": "2026-01-04T16:24:30+01:00",
+    "host_name": "GRENDEL",
+    "executable": "D:\\dev\\github\\natyamatsya\\sigslot26\\build-msvc\\benchmark\\benchmarks\\signal_benchmarks.exe",
+    "num_cpus": 32,
+    "mhz_per_cpu": 4200,
+    "caches": [
+      {
+        "type": "Data",
+        "level": 1,
+        "size": 32768,
+        "num_sharing": 2
+      },
+      {
+        "type": "Instruction",
+        "level": 1,
+        "size": 32768,
+        "num_sharing": 2
+      },
+      {
+        "type": "Unified",
+        "level": 2,
+        "size": 1048576,
+        "num_sharing": 2
+      },
+      {
+        "type": "Unified",
+        "level": 3,
+        "size": 100663296,
+        "num_sharing": 16
+      }
+    ],
+    "load_avg": [],
+    "library_version": "v1.9.0",
+    "library_build_type": "release",
+    "json_schema_version": 1
+  },
+  "benchmarks": [
+    {
+      "name": "BM_SignalConstruction",
+      "family_index": 0,
+      "per_family_instance_index": 0,
+      "run_name": "BM_SignalConstruction",
+      "run_type": "iteration",
+      "repetitions": 1,
+      "repetition_index": 0,
+      "threads": 1,
+      "iterations": 11200000,
+      "real_time": 6.6546982143011391e+01,
+      "cpu_time": 6.6964285714285708e+01,
+      "time_unit": "ns"
+    },
+    {
+      "name": "BM_SignalDestruction",
+      "family_index": 1,
+      "per_family_instance_index": 0,
+      "run_name": "BM_SignalDestruction",
+      "run_type": "iteration",
+      "repetitions": 1,
+      "repetition_index": 0,
+      "threads": 1,
+      "iterations": 3009055,
+      "real_time": 2.7425264775259336e+02,
+      "cpu_time": 2.8040364832148299e+02,
+      "time_unit": "ns"
+    },
+    {
+      "name": "BM_ConnectSingleSlot",
+      "family_index": 2,
+      "per_family_instance_index": 0,
+      "run_name": "BM_ConnectSingleSlot",
+      "run_type": "iteration",
+      "repetitions": 1,
+      "repetition_index": 0,
+      "threads": 1,
+      "iterations": 3733333,
+      "real_time": 1.8922780260938006e+02,
+      "cpu_time": 1.8833707038723844e+02,
+      "time_unit": "ns"
+    },
+    {
+      "name": "BM_EmissionSingleSlot",
+      "family_index": 3,
+      "per_family_instance_index": 0,
+      "run_name": "BM_EmissionSingleSlot",
+      "run_type": "iteration",
+      "repetitions": 1,
+      "repetition_index": 0,
+      "threads": 1,
+      "iterations": 112000000,
+      "real_time": 6.0138839285822794e+00,
+      "cpu_time": 5.9988839285714288e+00,
+      "time_unit": "ns"
+    },
+    {
+      "name": "BM_EmissionMultipleSlots",
+      "family_index": 4,
+      "per_family_instance_index": 0,
+      "run_name": "BM_EmissionMultipleSlots",
+      "run_type": "iteration",
+      "repetitions": 1,
+      "repetition_index": 0,
+      "threads": 1,
+      "iterations": 49777778,
+      "real_time": 1.4401998819619308e+01,
+      "cpu_time": 1.4439174042682259e+01,
+      "time_unit": "ns"
+    },
+    {
+      "name": "BM_SlotCount",
+      "family_index": 5,
+      "per_family_instance_index": 0,
+      "run_name": "BM_SlotCount",
+      "run_type": "iteration",
+      "repetitions": 1,
+      "repetition_index": 0,
+      "threads": 1,
+      "iterations": 112000000,
+      "real_time": 6.2459866071386774e+00,
+      "cpu_time": 6.2779017857142856e+00,
+      "time_unit": "ns"
+    }
+  ]
+}

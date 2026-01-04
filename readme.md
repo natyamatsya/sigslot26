@@ -796,7 +796,7 @@ compilers.
 
 ### Performance Benchmarks
 
-#### Phase 0, 1, 2 & 3 Optimization Results (January 4, 2026)
+#### Phase 0–4 Optimization Results (January 4, 2026)
 
 **Note:** These are microbenchmarks measuring individual operations in isolation. Real-world performance may vary depending on usage patterns, system load, and compiler optimizations.
 
@@ -809,35 +809,46 @@ compilers.
 
 ##### Single-Threaded Benchmarks
 
-| Benchmark | Phase 0 (ns) | Phase 2 (ns) | Phase 3 SBO (ns) | vs Baseline |
-|-----------|--------------|----------------|------------------|-------------|
-| Signal Construction | 30.1 | 63.4 | 63.5 | -111% |
-| Signal Destruction | 240 | 275 | 308 | -28% |
-| Connect Single Slot | 64.6 | 203 | 160 | -148% |
-| **Emission Single Slot** | **9.20** | **6.14** | **6.01** | **35% faster** |
-| **Emission Multiple Slots** | **17.6** | **14.1** | **14.2** | **19% faster** |
-| Slot Count | 9.04 | 6.20 | 6.25 | 31% faster |
+| Benchmark | Phase 0 (ns) | Phase 3 SBO (ns) | Phase 4 intrusive_ptr (ns) | vs Baseline |
+|-----------|--------------|------------------|----------------------------|-------------|
+| Signal Construction | 30.1 | 63.5 | 66.5 | -121% |
+| Signal Destruction | 240 | 308 | 274 | -14% |
+| Connect Single Slot | 64.6 | 160 | 189 | -193% |
+| **Emission Single Slot** | **9.20** | **6.01** | **6.01** | **35% faster** |
+| **Emission Multiple Slots** | **17.6** | **14.2** | **14.4** | **18% faster** |
+| Slot Count | 9.04 | 6.25 | 6.25 | 31% faster |
 
 ##### Multi-Threaded Benchmarks
 
-| Benchmark | Phase 0 (ns) | Phase 2 (ns) | Phase 3 SBO (ns) | vs Baseline |
-|-----------|--------------|--------------|------------------|-------------|
-| Thread-Safe Construction | 1.14 | 1.13 | 1.18 | ~same |
-| **Thread-Safe Emission** | **5.32** | **5.08** | **5.18** | **3% faster** |
-| Concurrent Emission (1 thread) | 61,006 | 63,095 | 59,921 | 2% faster |
-| Concurrent Emission (2 threads) | 87,692 | 89,734 | 88,113 | ~same |
-| Concurrent Emission (4 threads) | 147,187 | 149,534 | 149,939 | ~same |
-| Concurrent Connect (1 thread) | 49,416 | 50,539 | 55,558 | -12% |
-| Concurrent Connect (2 threads) | 84,034 | 86,014 | 88,539 | -5% |
-| Concurrent Connect (4 threads) | ~140,000 | 143,071 | 143,528 | ~same |
+| Benchmark | Phase 0 (ns) | Phase 3 SBO (ns) | Phase 4 intrusive_ptr (ns) | vs Baseline |
+|-----------|--------------|------------------|----------------------------|-------------|
+| Thread-Safe Construction | 1.14 | 1.18 | 0.78 | **32% faster** |
+| **Thread-Safe Emission** | **5.32** | **5.18** | **5.11** | **4% faster** |
+| Concurrent Emission (1 thread) | 61,006 | 59,921 | 55,021 | **10% faster** |
+| Concurrent Emission (2 threads) | 87,692 | 88,113 | 83,259 | **5% faster** |
+| Concurrent Emission (4 threads) | 147,187 | 149,939 | 147,369 | ~same |
+| Concurrent Connect (1 thread) | 49,416 | 55,558 | 55,344 | -12% |
+| Concurrent Connect (2 threads) | 84,034 | 88,539 | 87,144 | -4% |
+| Concurrent Connect (4 threads) | ~140,000 | 143,528 | 139,960 | ~same |
 
 **Key Findings:**
 - ✅ **Phase 3 SBO**: Small Buffer Optimization for up to 3 slots per group
-- ✅ **Major wins**: Emission latency improved 19-35% vs baseline (the hot path)
-- ✅ **Connect improved**: 21% faster than Phase 2 due to SBO stack allocation
-- ✅ **Thread-safe emission**: 3% faster with lock-free RCU + SBO
-- ⚠️ **Trade-offs**: Construction/destruction slower due to cache alignment and RCU overhead
-- 📊 **Overall**: SBO successfully avoids heap allocation for common use cases
+- ✅ **Phase 4 intrusive_ptr**: Embedded reference counting eliminates control block overhead
+- ✅ **Emission latency**: Improved 18-35% vs baseline (the hot path)
+- ✅ **Thread-safe construction**: 32% faster with intrusive_ptr
+- ✅ **Concurrent emission**: 5-10% faster with intrusive_ptr
+- ⚠️ **Trade-offs**: Connect slower due to `std::weak_ptr` anchor setup overhead
+
+**Current Implementation:**
+- Uses `intrusive_ptr` + `pmr` + `std::weak_ptr` for slot lifetime tracking
+- `intrusive_ptr` provides efficient reference counting with embedded counters
+- PMR (Polymorphic Memory Resource) enables custom allocation strategies
+- `std::weak_ptr` handles weak references for automatic slot disconnection
+
+**Next Steps:**
+- Experiment with a **dual counter intrusive_ptr** to support weak references natively
+- This would eliminate the `std::weak_ptr` dependency and unify reference counting
+- Goal: reduce memory overhead and improve cache locality for weak reference tracking
 
 **Archived Results:** `benchmark/archive/phase*_*.json`
 
