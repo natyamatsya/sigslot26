@@ -214,15 +214,20 @@ public:
     void await_suspend(std::coroutine_handle<> h) {
         continuation_ = h;
 
-        // One-shot connection
-        conn_ = signal_->connect([this](auto&&... args) {
-            result_ = std::make_tuple(std::forward<decltype(args)>(args)...);
-            conn_.disconnect();
-
-            // Save continuation locally before resuming - after resume(),
-            // 'this' may be destroyed (use-after-free)
+        // One-shot connection - capture result pointer to avoid 'this' access after resume
+        conn_ = signal_->connect([this, result_ptr = &result_](auto&&... args) {
+            // Store result first
+            *result_ptr = std::make_tuple(std::forward<decltype(args)>(args)...);
+            
+            // Save what we need before any potential destruction
+            auto conn = std::move(conn_);
             auto cont = continuation_;
-            continuation_ = nullptr;
+            
+            // Disconnect first (safe, we have a copy)
+            conn.disconnect();
+            
+            // Resume coroutine - after this, 'this' may be destroyed
+            // DO NOT access 'this' or any member after this point!
             if (cont)
                 cont.resume();
         });
