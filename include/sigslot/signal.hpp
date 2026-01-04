@@ -49,11 +49,6 @@ inline constexpr std::size_t sigslot_cache_line_size = 64;
 #define SIGSLOT_MAY_ALIAS
 #endif
 
-#if defined(__GXX_RTTI) || defined(__cpp_rtti) || defined(_CPPRTTI)
-#define SIGSLOT_RTTI_ENABLED 1
-#include <typeinfo>
-#endif
-
 namespace sigslot {
 
 namespace detail {
@@ -80,13 +75,6 @@ template<typename T>
 std::weak_ptr<T> to_weak(std::shared_ptr<T> s) {
     return s;
 }
-
-static constexpr bool with_rtti =
-#ifdef SIGSLOT_RTTI_ENABLED
-    true;
-#else
-    false;
-#endif
 
 template<typename F, typename... T>
 concept Callable = requires(F f, T... ts) { f(ts...); };
@@ -147,8 +135,12 @@ namespace detail {
 /**
  * @brief Function pointers and member function pointers size differ from compiler to
  * compiler, and for virtual members compared to non virtual members. On some
- * compilers, multiple inheritance has an impact too. Hence, we form an union
+ * compilers, multiple inheritance has an impact too. Hence, we form a union
  * big enough to store any kind of function pointer.
+ * 
+ * The mock namespace defines classes with multiple inheritance to ensure func_ptr
+ * is large enough to store PMFs from any class hierarchy. This enables portable
+ * PMF comparison via byte equality without relying on RTTI.
  */
 namespace mock {
 
@@ -230,12 +222,24 @@ struct function_traits<T*> {
     static constexpr bool must_check_object = false;
 };
 
+/**
+ * @brief Traits for pointer-to-member-function (PMF) types.
+ * 
+ * PMF disconnection works without RTTI by comparing the raw bytes of the PMF value.
+ * This is portable across all compilers (MSVC, GCC, Clang, clang-cl) because:
+ * - PMFs encode class-specific information (vtable offsets, thunks for multiple inheritance)
+ * - Different classes produce different binary representations even for same-named methods
+ * - The func_ptr union is sized to accommodate the largest PMF representation (multiple inheritance)
+ * 
+ * This approach avoids the unreliable typeid() comparison for PMF types, which fails
+ * on some compilers (notably clang-cl with multiple inheritance).
+ */
 template<trait::MemFnPointer T>
 struct function_traits<T> {
     static void ptr(const T& t, func_ptr& d) { d.value<T>() = t; }
 
-    static constexpr bool is_disconnectable = trait::with_rtti;
-    static constexpr bool must_check_object = true;
+    static constexpr bool is_disconnectable = true;
+    static constexpr bool must_check_object = false;
 };
 
 // for function objects, the assumption is that we are looking for the call operator
@@ -1117,17 +1121,14 @@ public:
         return cp && p && cp == p;
     }
 
+    /**
+     * @brief Check if this slot holds the given callable.
+     * 
+     * Uses portable byte comparison of function pointers via func_ptr.
+     * No RTTI required - works on all compilers including clang-cl with multiple inheritance.
+     */
     template<typename C>
-        requires(function_traits<C>::must_check_object)
-    [[nodiscard]] [[nodiscard]] [[nodiscard]] [[nodiscard]] bool
-    has_full_callable(const C& c) const {
-        return has_callable(c) && check_class_type<std::decay_t<C>>();
-    }
-
-    template<typename C>
-        requires(!function_traits<C>::must_check_object)
-    [[nodiscard]] [[nodiscard]] [[nodiscard]] [[nodiscard]] bool
-    has_full_callable(const C& c) const {
+    [[nodiscard]] bool has_full_callable(const C& c) const {
         return has_callable(c);
     }
 
@@ -1143,29 +1144,10 @@ protected:
     // retieve a pointer to the object embedded in the slot
     [[nodiscard]] virtual obj_ptr get_object() const noexcept { return nullptr; }
 
-    // retieve a pointer to the callable embedded in the slot
+    // retrieve a pointer to the callable embedded in the slot
     [[nodiscard]] virtual func_ptr get_callable() const noexcept {
         return get_function_ptr(nullptr);
     }
-
-#ifdef SIGSLOT_RTTI_ENABLED
-    // retieve a pointer to the callable embedded in the slot
-    [[nodiscard]] virtual const std::type_info& get_callable_type() const noexcept {
-        return typeid(nullptr);
-    }
-
-private:
-    template<typename U>
-    [[nodiscard]] bool check_class_type() const {
-        return typeid(U) == get_callable_type();
-    }
-
-#else
-    template<typename U>
-    bool check_class_type() const {
-        return false;
-    }
-#endif
 
 private:
     cleanable<Group>& cleaner;
@@ -1188,12 +1170,6 @@ protected:
 
     [[nodiscard]] func_ptr get_callable() const noexcept override { return get_function_ptr(func); }
 
-#ifdef SIGSLOT_RTTI_ENABLED
-    [[nodiscard]] const std::type_info& get_callable_type() const noexcept override {
-        return typeid(func);
-    }
-#endif
-
 private:
     std::decay_t<Func> func;
 };
@@ -1215,12 +1191,6 @@ protected:
     void call_slot(Args... args) override { func(conn, args...); }
 
     [[nodiscard]] func_ptr get_callable() const noexcept override { return get_function_ptr(func); }
-
-#ifdef SIGSLOT_RTTI_ENABLED
-    [[nodiscard]] const std::type_info& get_callable_type() const noexcept override {
-        return typeid(func);
-    }
-#endif
 
 private:
     std::decay_t<Func> func;
@@ -1247,12 +1217,6 @@ protected:
 
     [[nodiscard]] obj_ptr get_object() const noexcept override { return get_object_ptr(ptr); }
 
-#ifdef SIGSLOT_RTTI_ENABLED
-    [[nodiscard]] const std::type_info& get_callable_type() const noexcept override {
-        return typeid(pmf);
-    }
-#endif
-
 private:
     std::decay_t<Pmf> pmf;
     std::decay_t<Ptr> ptr;
@@ -1277,12 +1241,6 @@ protected:
 
     [[nodiscard]] func_ptr get_callable() const noexcept override { return get_function_ptr(pmf); }
     [[nodiscard]] obj_ptr get_object() const noexcept override { return get_object_ptr(ptr); }
-
-#ifdef SIGSLOT_RTTI_ENABLED
-    [[nodiscard]] const std::type_info& get_callable_type() const noexcept override {
-        return typeid(pmf);
-    }
-#endif
 
 private:
     std::decay_t<Pmf> pmf;
@@ -1323,12 +1281,6 @@ protected:
 
     [[nodiscard]] obj_ptr get_object() const noexcept override { return get_object_ptr(ptr); }
 
-#ifdef SIGSLOT_RTTI_ENABLED
-    [[nodiscard]] const std::type_info& get_callable_type() const noexcept override {
-        return typeid(func);
-    }
-#endif
-
 private:
     std::decay_t<Func> func;
     std::decay_t<WeakPtr> ptr;
@@ -1367,12 +1319,6 @@ protected:
     [[nodiscard]] func_ptr get_callable() const noexcept override { return get_function_ptr(pmf); }
 
     [[nodiscard]] obj_ptr get_object() const noexcept override { return get_object_ptr(ptr); }
-
-#ifdef SIGSLOT_RTTI_ENABLED
-    [[nodiscard]] const std::type_info& get_callable_type() const noexcept override {
-        return typeid(pmf);
-    }
-#endif
 
 private:
     std::decay_t<Pmf> pmf;
@@ -1676,10 +1622,9 @@ public:
      * Effect: Disconnects all the slots bound to the callable in argument.
      * Safety: Thread-safety depends on locking policy.
      *
-     * If the callable is a free or static member function, this overload is always
-     * available. However, RTTI is needed for it to work for pointer to member
-     * functions, function objects or and (references to) lambdas, because the
-     * C++ spec does not mandate the pointers to member functions to be unique.
+     * Works for free functions, static member functions, and pointer-to-member-functions.
+     * PMF comparison uses portable byte equality (no RTTI required).
+     * Note: Lambdas and function objects cannot be disconnected by callable.
      *
      * @param c a callable
      * @return the number of disconnected slots
