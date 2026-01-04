@@ -372,6 +372,263 @@ void add_slot(slot_ptr&& s) {
 
 ---
 
+### Phase 6: Slot Variant (Eliminating Virtual Dispatch)
+
+**Status**: 📋 Planned  
+**Impact**: High (estimated 2-3x faster emission)  
+**Effort**: High  
+**Risk**: Medium (architectural change)
+
+#### Motivation
+
+The current slot architecture uses **inheritance-based polymorphism** with virtual dispatch:
+
+```
+slot_state → grouped_slot<G> → slot_base<G, Args...> → slot<G, F, Args...>
+                                                     → slot_pmf<G, Pmf, Ptr, Args...>
+                                                     → slot_tracked<G, F, WeakPtr, Args...>
+                                                     → ... (6 slot types total)
+```
+
+Every emission calls `slot->call_slot(args...)` through a vtable, requiring:
+1. **Load vtable pointer** from object (~1 cache miss)
+2. **Load function pointer** from vtable (~1 cache miss if vtable not cached)
+3. **Indirect call** (prevents inlining, branch prediction miss)
+
+**Rust's `enum_dispatch`** demonstrates 10-22x speedup by replacing trait objects (`dyn Trait`)
+with enum-based dispatch. We can apply the same pattern in C++.
+
+#### 6.1 Research & Design
+**Status**: 📋 Planned  
+**Milestone**: Design document approved
+
+**Tasks**:
+- [ ] Measure current vtable overhead with micro-benchmarks
+- [ ] Profile cache miss rate during emission (`perf stat`, VTune)
+- [ ] Analyze slot type distribution in real-world usage
+- [ ] Design `slot_variant` storage layout
+- [ ] Decide on dispatch mechanism (switch vs function pointer table)
+
+**Key Design Decisions**:
+
+| Decision | Options | Recommendation |
+|----------|---------|----------------|
+| **Storage** | `std::variant` vs manual union | Manual union (avoid `std::visit` overhead) |
+| **Dispatch** | `switch` vs inline fn ptr | Inline fn ptr for hot path, switch for cold |
+| **Tag size** | 1 byte vs 4 bytes | 1 byte (`uint8_t`) - only 6 slot types |
+| **Extensibility** | Closed vs open slot types | Closed (variant) + fallback (dynamic_slot) |
+
+#### 6.2 Core Implementation
+**Status**: 📋 Planned  
+**Milestone**: `slot_variant` compiles and passes unit tests
+
+**Architecture**:
+
+```cpp
+namespace sigslot::detail {
+
+// Tag enumeration - ordered by expected frequency
+enum class slot_tag : uint8_t {
+    plain,          // slot<G, F, Args...>           - most common
+    pmf,            // slot_pmf<G, Pmf, Ptr, Args...>
+    tracked,        // slot_tracked<G, F, WeakPtr, Args...>
+    pmf_tracked,    // slot_pmf_tracked<G, Pmf, WeakPtr, Args...>
+    extended,       // slot_extended<G, F, Args...>
+    pmf_extended,   // slot_pmf_extended<G, Pmf, Ptr, Args...>
+    dynamic         // Fallback to virtual dispatch (user-defined slots)
+};
+
+template<typename Group, typename... Args>
+class slot_variant {
+    // Inline function pointer for hot-path call (eliminates vtable load)
+    using call_fn = void(*)(void*, Args&&...);
+    
+    // Calculate maximum storage needed across all slot types
+    static constexpr std::size_t storage_size = /* max(sizeof(slot_types...)) */;
+    static constexpr std::size_t storage_align = /* max(alignof(slot_types...)) */;
+    
+    // Storage layout (cache-optimized)
+    alignas(storage_align) std::byte storage_[storage_size];
+    call_fn call_;              // 8 bytes - inline for zero-indirection call
+    slot_tag tag_;              // 1 byte
+    std::atomic<bool> connected_{true};
+    std::atomic<bool> blocked_{false};
+    // ... other slot_state fields
+    
+public:
+    // Hot path: single indirect call, no vtable lookup
+    void operator()(Args... args) {
+        if (connected_.load(std::memory_order_relaxed) && 
+            !blocked_.load(std::memory_order_relaxed)) {
+            call_(storage_, std::forward<Args>(args)...);
+        }
+    }
+    
+    // Cold path: switch-based dispatch for type-specific operations
+    [[nodiscard]] bool connected() const noexcept {
+        switch (tag_) {
+            case slot_tag::tracked:
+            case slot_tag::pmf_tracked:
+                return check_weak_ptr_valid() && connected_.load(...);
+            default:
+                return connected_.load(std::memory_order_relaxed);
+        }
+    }
+};
+
+} // namespace sigslot::detail
+```
+
+**Implementation Tasks**:
+- [ ] Implement `slot_variant` class with manual union storage
+- [ ] Create type-specific `call_fn` generators for each slot type
+- [ ] Implement `emplace<SlotType>(...)` construction
+- [ ] Implement `connected()`, `disconnect()` with switch dispatch
+- [ ] Port `get_callable()`, `get_object()` for disconnect-by-callable/object
+- [ ] Ensure proper destruction semantics
+
+#### 6.3 Integration with signal_base
+**Status**: 📋 Planned  
+**Milestone**: `signal_base` uses `slot_variant` internally
+
+**Strategy**: Hybrid approach preserving extensibility
+
+```cpp
+template<GroupId Group, typename Lockable, typename... T>
+class signal_base {
+    // Primary storage: variant-based slots (fast path)
+    using fast_slot = slot_variant<Group, T...>;
+    
+    // Fallback: virtual dispatch for user-defined slot types
+    using dynamic_slot = slot_strong_ptr<slot_base<Group, T...>>;
+    
+    // Unified slot storage
+    using slot_storage = std::variant<fast_slot, dynamic_slot>;
+    using slots_type = sbo_container<slot_storage, 3>;
+    
+    // Emission dispatches based on variant index
+    template<typename Self, typename... U>
+    void operator()(this Self&& self, U&&... args) {
+        for (auto& slot : slots) {
+            std::visit([&](auto& s) {
+                if constexpr (std::same_as<decltype(s), fast_slot&>) {
+                    s(std::forward<U>(args)...);  // Direct call
+                } else {
+                    (*s)(std::forward<U>(args)...);  // Virtual call
+                }
+            }, slot);
+        }
+    }
+};
+```
+
+**Integration Tasks**:
+- [ ] Update `signal_base` slot container type
+- [ ] Modify `connect()` overloads to construct `slot_variant`
+- [ ] Update `disconnect()` to handle both storage types
+- [ ] Ensure RCU/COW compatibility with new storage
+- [ ] Preserve `connection` / `scoped_connection` semantics
+
+#### 6.4 Optimization & Tuning
+**Status**: 📋 Planned  
+**Milestone**: Performance targets met
+
+**Optimizations**:
+- [ ] **Avoid `std::visit`**: Use `if constexpr` with `std::holds_alternative` for hot paths
+- [ ] **Branch prediction hints**: `[[likely]]` for `fast_slot` path
+- [ ] **Storage size tuning**: Profile actual slot sizes, minimize padding
+- [ ] **Tag ordering**: Place most common slot types first for branch prediction
+- [ ] **Separate hot/cold data**: Move rarely-used fields to separate allocation
+
+**Alternative: Tagged Pointer**:
+```cpp
+// Steal low bits of call_ pointer for tag (requires 8-byte alignment)
+// Saves 7 bytes but adds masking overhead
+uintptr_t call_and_tag_;  // bits 0-2: tag, bits 3-63: function pointer
+```
+
+#### 6.5 Benchmarking & Validation
+**Status**: 📋 Planned  
+**Milestone**: Benchmarks demonstrate ≥50% emission speedup
+
+**Benchmark Suite**:
+
+| Benchmark | Metric | Baseline Target |
+|-----------|--------|-----------------|
+| `EmitSingleSlot` | Latency (ns) | Current: ~5ns → Target: ~2ns |
+| `EmitMultipleSlots` | Throughput (M/s) | Current: ~200M → Target: ~400M |
+| `ConnectPlainSlot` | Latency (ns) | Current: ~130ns → Target: ≤150ns |
+| `MixedSlotTypes` | Emission latency | Measure overhead of variant dispatch |
+| `CacheMissRate` | L1/L2 misses | Profile with `perf stat` |
+
+**Validation Tests**:
+- [ ] All existing signal tests pass with `slot_variant`
+- [ ] Thread-safety tests (emission during connect/disconnect)
+- [ ] Memory leak tests (valgrind, ASan)
+- [ ] Exception safety tests
+
+#### 6.6 Migration & Compatibility
+**Status**: 📋 Planned  
+**Milestone**: Feature flag for gradual rollout
+
+**Migration Strategy**:
+
+```cmake
+# CMake feature flag
+option(SIGSLOT_USE_SLOT_VARIANT "Use variant-based slot storage" OFF)
+```
+
+**Compatibility Considerations**:
+- **API**: No breaking changes to public `signal`, `connection` API
+- **ABI**: Internal change only, signals are header-only
+- **Custom slots**: Supported via `dynamic_slot` fallback
+- **Compile time**: May increase due to variant machinery
+
+**Rollout Phases**:
+1. **Alpha**: Opt-in via `SIGSLOT_USE_SLOT_VARIANT=ON`
+2. **Beta**: Default ON, opt-out available
+3. **Stable**: Remove fallback, variant-only
+
+#### 6.7 Future: Closed Variant (Maximum Performance)
+**Status**: 📋 Future  
+**Prerequisite**: Phase 6.1-6.6 complete
+
+If extensibility is not required, a fully closed variant eliminates the `std::visit` overhead:
+
+```cpp
+// Closed slot variant - no dynamic fallback
+template<typename Group, typename... Args>
+class slot_variant_closed {
+    // Fixed set of slot types, no virtual dispatch anywhere
+    using storage_t = std::variant<
+        slot_plain<Group, Args...>,
+        slot_pmf<Group, Args...>,
+        slot_tracked<Group, Args...>,
+        slot_pmf_tracked<Group, Args...>
+    >;
+    
+    storage_t storage_;
+    
+    // Compile-time dispatch via overloaded lambdas
+    void operator()(Args... args) {
+        std::visit([&](auto& s) { s.call(args...); }, storage_);
+    }
+};
+```
+
+**Trade-off**: Maximum speed vs extensibility. Offer as `signal_fast<Args...>` alias.
+
+---
+
+#### References
+
+- [Rust enum_dispatch crate](https://docs.rs/enum_dispatch/latest/enum_dispatch/) - 10-22x speedup over `dyn Trait`
+- [Foonathan tagged_union](https://www.foonathan.net/2016/12/variant/) - Zero-overhead variant building block
+- [Louis Dionne dyno](https://github.com/ldionne/dyno) - Runtime polymorphism without inheritance
+- [Sean Parent "Inheritance Is The Base Class of Evil"](https://sean-parent.stlab.cc/papers-and-presentations/) - Type erasure patterns
+
+---
+
 ## Why Not Hazard Pointers?
 
 We evaluated hazard pointers (Folly, libcds, C++26 std::hazard_pointer) but
