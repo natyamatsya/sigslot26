@@ -174,9 +174,9 @@ jobs:
         shell: bash
         run: |
           if [[ "${{ matrix.config.name }}" == "Windows MSVC" ]]; then
-            # MSVC uses AddressSanitizer and UBSan
-            export ASAN_OPTIONS="suppressions=${{github.workspace}}/test/asan_suppressions.txt"
-            export UBSAN_OPTIONS="suppressions=${{github.workspace}}/test/ubsan_suppressions.txt"
+            # MSVC AddressSanitizer doesn't support suppression files
+            # Skip suppressions on Windows MSVC
+            :
           elif [[ "${{ matrix.config.name }}" == "MacOS apple-clang" ]]; then
             # Apple Clang sanitizers don't support suppression files in the same format
             # Skip suppressions on macOS
