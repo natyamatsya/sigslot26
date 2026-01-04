@@ -172,7 +172,7 @@ inline std::shared_ptr<B> make_shared(Arg&&... arg) {
 ```
 
 #### 4.2 Intrusive Reference Counting
-**Status**: Research  
+**Status**: ✅ **COMPLETE** (Dual-Counter Implementation)  
 **Impact**: High  
 **Effort**: High
 
@@ -180,87 +180,85 @@ inline std::shared_ptr<B> make_shared(Arg&&... arg) {
 1. Separate control block allocation
 2. Two atomic operations per copy (strong + weak count)
 3. Virtual destructor indirection
+4. `std::weak_ptr` anchor needed 16 extra bytes per slot
 
-**Solution**: Intrusive reference counting eliminates control block.
+**Solution**: Dual-counter intrusive reference counting with native weak reference support.
 
 ```cpp
-// Base class with embedded reference count
-class intrusive_slot_base {
-    mutable std::atomic<std::size_t> m_refcount{1};
+// Base class with embedded strong + weak reference counts
+class intrusive_refcount {
+    mutable std::atomic<std::size_t> m_strong{0};
+    mutable std::atomic<std::size_t> m_weak{1};  // +1 while strong > 0
     
 public:
     void add_ref() const noexcept {
-        m_refcount.fetch_add(1, std::memory_order_relaxed);
+        m_strong.fetch_add(1, std::memory_order_relaxed);
     }
     
-    void release() const noexcept {
-        if (m_refcount.fetch_sub(1, std::memory_order_acq_rel) == 1) {
-            delete this;
+    void release_ref() const noexcept {
+        if (m_strong.fetch_sub(1, std::memory_order_acq_rel) == 1) {
+            destroy();           // Call destructor
+            release_weak_ref();  // Release weak count held by strong refs
         }
     }
-};
-
-// Smart pointer that works with intrusive types
-template<typename T>
-class intrusive_ptr {
-    T* m_ptr = nullptr;
-public:
-    // ~8 bytes vs 16 bytes for shared_ptr
-    // No control block allocation
-    // Single atomic per copy
+    
+    // Lock-free CAS loop for weak_ptr::lock()
+    [[nodiscard]] bool try_add_ref() const noexcept {
+        std::size_t count = m_strong.load(std::memory_order_relaxed);
+        while (count != 0) {
+            if (m_strong.compare_exchange_weak(count, count + 1,
+                    std::memory_order_acq_rel, std::memory_order_relaxed)) {
+                return true;
+            }
+        }
+        return false;
+    }
 };
 ```
 
-**Expected Impact**: 
-- Reduce slot memory from ~80 bytes to ~48 bytes
-- Faster copy operations (single atomic vs two)
-- Better cache locality
+**Benchmark Results** (AMD Ryzen 9 7950X3D, MSVC 19.50):
 
-**Trade-offs**:
-- Requires base class modification (breaking change for custom slots)
-- No weak_ptr equivalent (connection handles need redesign)
-- More complex implementation
+| Metric | Phase 4 (std::weak_ptr anchor) | Phase 4 (dual-counter) | Improvement |
+|--------|--------------------------------|------------------------|-------------|
+| Connect Single Slot | 189 ns | 167 ns | **11% faster** |
+| Emission Single Slot | 6.01 ns | 5.86 ns | **2% faster** |
+| Memory per slot | ~56 bytes | ~40 bytes | **16 bytes saved** |
+
+**Key Benefits**:
+- ✅ Eliminated `std::weak_ptr` anchor overhead
+- ✅ Lock-free `weak_ptr::lock()` via atomic CAS
+- ✅ 16 bytes for counters fits in cache line with 3-slot SBO
+- ✅ Foundation for future lock-free connect/disconnect
+
+**Memory Layout**:
+```
+intrusive_refcount: 16 bytes (m_strong + m_weak atomics)
+slot_state fields:  ~24 bytes (index, connected, blocked flags)
+Total:              ~40 bytes (vs ~56 bytes with std::weak_ptr anchor)
+```
+
+**CMake Usage**:
+```cmake
+-DSIGSLOT_USE_INTRUSIVE_PTR=ON  # Enable dual-counter intrusive_ptr
+```
 
 #### 4.3 Connection Handle Optimization
-**Status**: Proposed  
+**Status**: ✅ **Superseded** by 4.2 Dual-Counter  
 **Impact**: Medium  
 **Effort**: Medium
 
-**Problem**: Current `connection` holds `std::weak_ptr<slot_base>`:
+**Original Problem**: `connection` held `std::weak_ptr<slot_base>` requiring:
 - 16 bytes storage
-- Requires atomic operations to lock/check validity
+- Atomic operations to lock/check validity
 - Control block must outlive all weak_ptrs
 
-**Solution**: Index-based connection handles.
+**Resolution**: The dual-counter `intrusive_weak_ptr` (Phase 4.2) provides:
+- Lock-free `lock()` via CAS (same as proposed index-based approach)
+- No separate control block (counters embedded in slot)
+- Compatible with existing `connection` API (no breaking changes)
 
-```cpp
-// Lightweight connection handle
-class connection {
-    signal_base* m_signal;      // 8 bytes
-    std::uint32_t m_slot_id;    // 4 bytes (unique ID, not index)
-    std::uint32_t m_generation; // 4 bytes (ABA protection)
-    // Total: 16 bytes, no allocation, no atomics for storage
-    
-public:
-    bool connected() const {
-        return m_signal && m_signal->has_slot(m_slot_id, m_generation);
-    }
-    
-    void disconnect() {
-        if (m_signal) m_signal->remove_slot(m_slot_id);
-    }
-};
-```
-
-**Expected Impact**:
-- Zero allocation for connection objects
-- Faster validity checks (no weak_ptr lock)
-- Smaller memory footprint
-
-**Trade-offs**:
-- Requires slot ID management in signal
-- Generation counter needed for ABA safety
-- Breaking change for connection API
+Index-based handles are no longer needed - `intrusive_weak_ptr` achieves the
+same performance goals while maintaining API compatibility.
 
 #### 4.4 Lazy Slot Cleanup
 **Status**: ❌ **Blocked** (API incompatibility)  
@@ -308,7 +306,20 @@ For static slot configurations known at compile time.
 Vectorized slot invocation for trivial callables.
 
 #### 5.4 Lock-Free Connect/Disconnect
-Full lock-free implementation using CAS loops.
+**Status**: Foundation Ready  
+**Impact**: High  
+**Effort**: High
+
+Full lock-free implementation using CAS loops. The dual-counter `intrusive_ptr`
+(Phase 4.2) provides the necessary foundation:
+- Lock-free `weak_ptr::lock()` already implemented
+- Atomic reference counting ready for concurrent access
+- RCU pattern for slot container already in place
+
+**Remaining Work**:
+- CAS loop for slot vector modification
+- ABA protection for concurrent connect/disconnect
+- Hazard pointer or epoch-based reclamation (if needed)
 
 ---
 
@@ -317,14 +328,16 @@ Full lock-free implementation using CAS loops.
 We evaluated hazard pointers (Folly, libcds, C++26 std::hazard_pointer) but
 determined they are **overengineering** for sigslot's use case:
 
-| Aspect | Hazard Pointers | RCU + shared_ptr |
-|--------|-----------------|------------------|
-| **Reclamation** | Manual retire list | Automatic (refcount) |
+| Aspect | Hazard Pointers | RCU + intrusive_ptr |
+|--------|-----------------|---------------------|
+| **Reclamation** | Manual retire list | Automatic (dual-counter refcount) |
 | **Global state** | Required (domain) | None |
-| **Base class** | Required inheritance | None |
+| **Base class** | Required inheritance | `intrusive_refcount` (opt-in) |
 | **Best for** | Intrusive linked structures | Swapped containers |
 
-Our slot list is a `vector` that gets atomically swapped - RCU is the natural fit.
+Our slot list is a `vector` that gets atomically swapped - RCU with dual-counter
+`intrusive_ptr` is the natural fit. The embedded weak reference count provides
+the same safety guarantees as hazard pointers for our use case.
 
 ---
 
