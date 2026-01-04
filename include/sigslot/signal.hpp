@@ -33,6 +33,7 @@
 #endif
 
 #include "signal-sbo.hpp"
+#include "connection.hpp"
 
 // Optional: Use variant-based slot storage for eliminating virtual dispatch
 #ifdef SIGSLOT_USE_SLOT_VARIANT
@@ -55,9 +56,6 @@ inline constexpr std::size_t sigslot_cache_line_size = 64;
 #endif
 
 namespace sigslot {
-
-// Forward declaration needed for slot_extended classes
-class connection;
 
 namespace detail {
 
@@ -120,18 +118,13 @@ concept Observer = std::is_base_of_v<::sigslot::detail::observer_type, std::remo
 
 } // namespace trait
 
-template<typename T>
-concept GroupId = requires(T g1, T g2) {
-    requires std::is_default_constructible_v<T>;
-    requires std::is_copy_constructible_v<T>;
-    { g1 < g2 } -> std::same_as<bool>;
-    { g1 == g2 } -> std::same_as<bool>;
-};
-
-template<GroupId, typename, typename...>
-class signal_base;
+// GroupId concept and signal_base forward declaration are in connection.hpp
 
 namespace detail {
+
+// Import connection from parent namespace for slot_extended classes
+using sigslot::connection;
+using sigslot::scoped_connection;
 
 /**
  * @brief The following function_traits and object_pointer series of templates are
@@ -781,72 +774,10 @@ inline std::shared_ptr<B> make_slot_ptr(Arg&&... arg) {
 
 #endif // SIGSLOT_USE_INTRUSIVE_PTR / SIGSLOT_USE_SLOT_POOL
 
-/** @brief slot_state holds slot type independent state, to be used to interact with
- * slots indirectly through connection and scoped_connection objects.
- * 
- * When SIGSLOT_USE_INTRUSIVE_PTR is enabled:
- * - Inherits from intrusive_refcount for SBO storage performance
- * - Stores a self-referencing shared_ptr for safe weak pointer support
- */
-#ifdef SIGSLOT_USE_INTRUSIVE_PTR
-class slot_state : public intrusive_refcount {
-#else
-class slot_state : public std::enable_shared_from_this<slot_state> {
-#endif
-public:
-    slot_state() noexcept
-        : m_index(0)
-        , m_connected(true)
-        , m_blocked(false) {}
+// slot_state, slot_weak_ptr, slot_strong_ptr, connection, scoped_connection
+// are now defined in connection.hpp
 
-#ifdef SIGSLOT_USE_INTRUSIVE_PTR
-    ~slot_state() override = default;
-#else
-    virtual ~slot_state() = default;
-#endif
-
-    // memory_order_relaxed is safe here: we only need eventual consistency for
-    // the connected flag. No synchronization with other memory operations required.
-    // See: https://en.cppreference.com/w/cpp/atomic/memory_order
-    [[nodiscard]] virtual bool connected() const noexcept {
-        return m_connected.load(std::memory_order_relaxed);
-    }
-
-    bool disconnect() noexcept {
-        bool ret = m_connected.exchange(false);
-        if (ret) {
-            do_disconnect();
-        }
-        return ret;
-    }
-
-    // Blocking is a hint to skip slot invocation; relaxed ordering suffices.
-    [[nodiscard]] bool blocked() const noexcept {
-        return m_blocked.load(std::memory_order_relaxed);
-    }
-    void block() noexcept { m_blocked.store(true, std::memory_order_relaxed); }
-    void unblock() noexcept { m_blocked.store(false, std::memory_order_relaxed); }
-
-protected:
-    virtual void do_disconnect() {}
-
-    [[nodiscard]] std::size_t index() const noexcept { 
-        return m_index.load(std::memory_order_relaxed); 
-    }
-
-    void set_index(std::size_t idx) noexcept { 
-        m_index.store(idx, std::memory_order_relaxed); 
-    }
-
-private:
-    template<GroupId, typename, typename...>
-    friend class ::sigslot::signal_base;
-
-    std::atomic<std::size_t> m_index; // index into the array of slot pointers inside the signal
-    std::atomic<bool> m_connected;
-    std::atomic<bool> m_blocked;
-};
-
+// grouped_slot extends slot_state with group information
 template<typename Group>
 class grouped_slot : public slot_state {
 protected:
@@ -863,177 +794,28 @@ private:
 
 } // namespace detail
 
-// Type aliases for pointer types based on configuration
+// Helper functions for pointer casting (not in connection.hpp)
 #ifdef SIGSLOT_USE_INTRUSIVE_PTR
-// With dual-counter intrusive_ptr, we use intrusive_weak_ptr for weak references
-// This eliminates the need for std::weak_ptr anchor and provides lock-free lock()
-template<typename T>
-using slot_weak_ptr = detail::intrusive_weak_ptr<T>;
-template<typename T>
-using slot_strong_ptr = detail::intrusive_ptr<T>;
-
 template<typename T, typename U>
 inline slot_strong_ptr<T> slot_pointer_cast(const slot_strong_ptr<U>& ptr) {
     return detail::static_pointer_cast<T>(ptr);
 }
 
-// Helper to get a weak_ptr from a slot for connection objects
 template<typename T>
 inline slot_weak_ptr<detail::slot_state> get_slot_weak_ptr(const slot_strong_ptr<T>& ptr) {
     return slot_weak_ptr<detail::slot_state>(detail::static_pointer_cast<detail::slot_state>(ptr));
 }
 #else
-template<typename T>
-using slot_weak_ptr = std::weak_ptr<T>;
-template<typename T>
-using slot_strong_ptr = std::shared_ptr<T>;
-
 template<typename T, typename U>
 inline slot_strong_ptr<T> slot_pointer_cast(const slot_strong_ptr<U>& ptr) {
     return std::static_pointer_cast<T>(ptr);
 }
 
-// Helper to get a weak_ptr from a slot for connection objects
 template<typename T>
 inline slot_weak_ptr<detail::slot_state> get_slot_weak_ptr(const slot_strong_ptr<T>& ptr) {
     return ptr;
 }
 #endif
-
-/**
- * @brief connection_blocker is a RAII object that blocks a connection until destruction
- */
-class connection_blocker {
-public:
-    connection_blocker() = default;
-    ~connection_blocker() noexcept { release(); }
-
-    connection_blocker(const connection_blocker&) = delete;
-    connection_blocker& operator=(const connection_blocker&) = delete;
-
-    connection_blocker(connection_blocker&& o) noexcept
-        : m_state{std::move(o.m_state)} {}
-
-    connection_blocker& operator=(connection_blocker&& o) noexcept {
-        release();
-        m_state.swap(o.m_state);
-        return *this;
-    }
-
-private:
-    friend class connection;
-    explicit connection_blocker(slot_weak_ptr<detail::slot_state> s) noexcept
-        : m_state{std::move(s)} {
-        if (auto d = m_state.lock()) {
-            d->block();
-        }
-    }
-
-    void release() noexcept {
-        if (auto d = m_state.lock()) {
-            d->unblock();
-        }
-    }
-
-private:
-    slot_weak_ptr<detail::slot_state> m_state;
-};
-
-
-/**
- * @brief A connection object allows interaction with an ongoing slot connection
- *
- * It allows common actions such as connection blocking and disconnection.
- @note that connection is not a RAII object, one does not need to hold one
- * such object to keep the signal-slot connection alive.
- */
-class connection {
-public:
-    connection() = default;
-    virtual ~connection() = default;
-
-    connection(const connection&) noexcept = default;
-    connection& operator=(const connection&) noexcept = default;
-    connection(connection&&) noexcept = default;
-    connection& operator=(connection&&) noexcept = default;
-
-    [[nodiscard]] bool valid() const noexcept { return !m_state.expired(); }
-
-    [[nodiscard]] bool connected() const noexcept {
-        const auto d = m_state.lock();
-        return d && d->connected();
-    }
-
-    bool disconnect() noexcept {
-        auto d = m_state.lock();
-        return d && d->disconnect();
-    }
-
-    [[nodiscard]] bool blocked() const noexcept {
-        const auto d = m_state.lock();
-        return d && d->blocked();
-    }
-
-    void block() noexcept {
-        if (auto d = m_state.lock()) {
-            d->block();
-        }
-    }
-
-    void unblock() noexcept {
-        if (auto d = m_state.lock()) {
-            d->unblock();
-        }
-    }
-
-    [[nodiscard]] connection_blocker blocker() const noexcept {
-        return connection_blocker{m_state};
-    }
-
-protected:
-    template<GroupId, typename, typename...>
-    friend class signal_base;
-    explicit connection(slot_weak_ptr<detail::slot_state> s) noexcept
-        : m_state{std::move(s)} {}
-
-    // NOLINTNEXTLINE(misc-non-private-member-variables-in-classes)
-    slot_weak_ptr<detail::slot_state> m_state;
-};
-
-/**
- * @brief scoped_connection is a RAII version of connection
- * It disconnects the slot from the signal upon destruction.
- */
-class scoped_connection final : public connection {
-public:
-    scoped_connection() = default;
-    ~scoped_connection() override { disconnect(); }
-
-    // NOLINTNEXTLINE(google-explicit-constructor,hicpp-explicit-conversions)
-    /*implicit*/ scoped_connection(const connection& c) noexcept
-        : connection(c) {}
-    // NOLINTNEXTLINE(google-explicit-constructor,hicpp-explicit-conversions)
-    /*implicit*/ scoped_connection(connection&& c) noexcept
-        : connection(std::move(c)) {}
-
-    scoped_connection(const scoped_connection&) noexcept = delete;
-    scoped_connection& operator=(const scoped_connection&) noexcept = delete;
-
-    scoped_connection(scoped_connection&& o) noexcept
-        : connection{std::move(o.m_state)} {}
-
-    scoped_connection& operator=(scoped_connection&& o) noexcept {
-        disconnect();
-        m_state.swap(o.m_state);
-        return *this;
-    }
-
-private:
-    template<GroupId, typename, typename...>
-    friend class signal_base;
-    explicit scoped_connection(slot_weak_ptr<detail::slot_state> s) noexcept
-        : connection{std::move(s)} {}
-};
 
 /**
  * @brief Observer is a base class for intrusive lifetime tracking of objects.
@@ -1252,9 +1034,20 @@ class slot_extended final : public slot_base<Group, Args...> {
 public:
     template<typename F>
     constexpr slot_extended(cleanable<Group>& c, F&& f, Group const& gid)
-        // Note: Extended slots use virtual dispatch (connection dependency prevents inline fn ptr)
+#ifdef SIGSLOT_USE_SLOT_VARIANT
+        : base_t(c, gid, &slot_extended::call_fn_impl)
+#else
         : base_t(c, gid)
+#endif
         , func{std::forward<F>(f)} {}
+
+#ifdef SIGSLOT_USE_SLOT_VARIANT
+    static bool call_fn_impl(base_t* self, Args... args) {
+        auto* s = static_cast<slot_extended*>(self);
+        s->func(s->conn, args...);
+        return true;
+    }
+#endif
 
     connection conn; // TODO(CK): prevent public members!
 
@@ -1315,10 +1108,21 @@ class slot_pmf_extended final : public slot_base<Group, Args...> {
 public:
     template<typename F, typename P>
     constexpr slot_pmf_extended(cleanable<Group>& c, F&& f, P&& p, Group const& gid)
-        // Note: Extended slots use virtual dispatch (connection dependency prevents inline fn ptr)
+#ifdef SIGSLOT_USE_SLOT_VARIANT
+        : base_t(c, gid, &slot_pmf_extended::call_fn_impl)
+#else
         : base_t(c, gid)
+#endif
         , pmf{std::forward<F>(f)}
         , ptr{std::forward<P>(p)} {}
+
+#ifdef SIGSLOT_USE_SLOT_VARIANT
+    static bool call_fn_impl(base_t* self, Args... args) {
+        auto* s = static_cast<slot_pmf_extended*>(self);
+        ((*s->ptr).*s->pmf)(s->conn, args...);
+        return true;
+    }
+#endif
 
     connection conn; // TODO(CK): prevent public members!
 

@@ -131,8 +131,7 @@ struct pmf_tracked_slot_storage {
     static constexpr bool is_tracked = true;
 };
 
-// Forward declaration for connection
-class connection;
+// connection is imported via using declaration from sigslot namespace in signal.hpp
 
 // Extended slot storage: callable that receives connection as first arg
 template<typename Func, typename Connection>
