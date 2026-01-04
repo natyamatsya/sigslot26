@@ -38,12 +38,10 @@
 // When multiple threads access adjacent memory locations, they may experience
 // "false sharing" - cache invalidation even though they access different variables.
 // Aligning hot atomic variables to cache line boundaries prevents this.
-// See: https://en.cppreference.com/w/cpp/thread/hardware_destructive_interference_size
-#ifdef __cpp_lib_hardware_interference_size
-    inline constexpr std::size_t sigslot_cache_line_size = std::hardware_destructive_interference_size;
-#else
-    inline constexpr std::size_t sigslot_cache_line_size = 64;  // Common default for x86/ARM
-#endif
+// Using 64 bytes: standard cache line size on x86-64, ARM64, and most modern platforms.
+// We avoid std::hardware_destructive_interference_size due to GCC's -Winterference-size
+// warning about ABI instability, and the value is 64 on all major platforms anyway.
+inline constexpr std::size_t sigslot_cache_line_size = 64;
 
 #if defined __clang__ || (__GNUC__ > 5)
 #define SIGSLOT_MAY_ALIAS __attribute__((__may_alias__))
