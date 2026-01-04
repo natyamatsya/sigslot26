@@ -520,34 +520,39 @@ TEST_CASE("ArenaTestObject heap allocation", "[arena][intrusive_ptr]") {
     REQUIRE(ArenaTestObject::destructed == 1);
 }
 
-// Disabled: Arena allocation has threading issues when slots are shared across threads
-TEST_CASE("ArenaTestObject arena allocation", "[.][arena][intrusive_ptr]") {
+// Arena allocation with safe reset tracking
+TEST_CASE("ArenaTestObject arena allocation", "[arena][intrusive_ptr]") {
     ArenaTestObject::reset_counters();
     slot_arena arena;
     
     {
-        // Allocate from arena
+        // Allocate from arena with tracking
         void* mem = arena.allocate(sizeof(ArenaTestObject), alignof(ArenaTestObject));
         auto* obj = new(mem) ArenaTestObject(42);
-        obj->set_arena_allocated();
+        obj->set_arena_allocated(&arena);  // Pass arena for safe tracking
         
         intrusive_ptr<ArenaTestObject> ptr(obj, true);
         REQUIRE(ptr->value == 42);
         REQUIRE(ArenaTestObject::constructed == 1);
         REQUIRE(ArenaTestObject::destructed == 0);
+        REQUIRE_FALSE(arena.has_pending_weak());
     }
     
     // Object destroyed (destructor called) but memory not freed
     REQUIRE(ArenaTestObject::destroyed_called == 1);
     REQUIRE(ArenaTestObject::destructed == 1);
+    REQUIRE_FALSE(arena.has_pending_weak());  // No pending weak refs
     
     // Arena still has the memory allocated
     auto stats = arena.get_stats();
     REQUIRE(stats.used_bytes > 0);
+    
+    // Safe to reset now
+    arena.reset();
 }
 
-// Disabled: Arena allocation has threading issues when slots are shared across threads
-TEST_CASE("ArenaTestObject multiple arena allocations", "[.][arena][intrusive_ptr]") {
+// Multiple arena allocations with safe tracking
+TEST_CASE("ArenaTestObject multiple arena allocations", "[arena][intrusive_ptr]") {
     ArenaTestObject::reset_counters();
     slot_arena arena;
     
@@ -557,12 +562,13 @@ TEST_CASE("ArenaTestObject multiple arena allocations", "[.][arena][intrusive_pt
         for (int i = 0; i < 100; ++i) {
             void* mem = arena.allocate(sizeof(ArenaTestObject), alignof(ArenaTestObject));
             auto* obj = new(mem) ArenaTestObject(i);
-            obj->set_arena_allocated();
+            obj->set_arena_allocated(&arena);
             ptrs.emplace_back(obj, true);
         }
         
         REQUIRE(ArenaTestObject::constructed == 100);
         REQUIRE(ArenaTestObject::destructed == 0);
+        REQUIRE_FALSE(arena.has_pending_weak());
         
         // Verify all values
         for (std::size_t i = 0; i < 100; ++i) {
@@ -573,10 +579,14 @@ TEST_CASE("ArenaTestObject multiple arena allocations", "[.][arena][intrusive_pt
     // All destructors called
     REQUIRE(ArenaTestObject::destroyed_called == 100);
     REQUIRE(ArenaTestObject::destructed == 100);
+    REQUIRE_FALSE(arena.has_pending_weak());
+    
+    // Safe to reset
+    arena.reset();
 }
 
-// Disabled: Arena allocation has threading issues when slots are shared across threads
-TEST_CASE("ArenaTestObject arena reset reuse", "[.][arena][intrusive_ptr]") {
+// Arena reset and reuse with safe tracking
+TEST_CASE("ArenaTestObject arena reset reuse", "[arena][intrusive_ptr]") {
     ArenaTestObject::reset_counters();
     slot_arena arena;
     
@@ -586,17 +596,18 @@ TEST_CASE("ArenaTestObject arena reset reuse", "[.][arena][intrusive_ptr]") {
         for (int i = 0; i < 50; ++i) {
             void* mem = arena.allocate(sizeof(ArenaTestObject), alignof(ArenaTestObject));
             auto* obj = new(mem) ArenaTestObject(i);
-            obj->set_arena_allocated();
+            obj->set_arena_allocated(&arena);
             ptrs.emplace_back(obj, true);
         }
     }
     
     REQUIRE(ArenaTestObject::constructed == 50);
     REQUIRE(ArenaTestObject::destructed == 50);
+    REQUIRE_FALSE(arena.has_pending_weak());
     
     auto stats_before = arena.get_stats();
     
-    // Reset arena for reuse
+    // Reset arena for reuse (safe - no pending weak refs)
     arena.reset();
     
     auto stats_after = arena.get_stats();
@@ -610,7 +621,7 @@ TEST_CASE("ArenaTestObject arena reset reuse", "[.][arena][intrusive_ptr]") {
         for (int i = 0; i < 50; ++i) {
             void* mem = arena.allocate(sizeof(ArenaTestObject), alignof(ArenaTestObject));
             auto* obj = new(mem) ArenaTestObject(i + 100);
-            obj->set_arena_allocated();
+            obj->set_arena_allocated(&arena);
             ptrs.emplace_back(obj, true);
         }
         
@@ -622,6 +633,7 @@ TEST_CASE("ArenaTestObject arena reset reuse", "[.][arena][intrusive_ptr]") {
     
     REQUIRE(ArenaTestObject::constructed == 50);
     REQUIRE(ArenaTestObject::destructed == 50);
+    REQUIRE_FALSE(arena.has_pending_weak());
 }
 
 // Disabled: Arena allocation has threading issues when slots are shared across threads

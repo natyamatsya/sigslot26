@@ -5,6 +5,7 @@
 #include <atomic>
 #include <cstddef>
 #include <utility>
+#include <sigslot/slot_arena.hpp>
 
 namespace sigslot::detail {
 
@@ -30,6 +31,8 @@ class intrusive_refcount {
     mutable std::atomic<std::size_t> m_strong{0};
     mutable std::atomic<std::size_t> m_weak{1};  // +1 for strong refs existing
     bool m_arena_allocated = false;
+    slot_arena* m_arena = nullptr;  // Optional arena for safe reset tracking
+    mutable bool m_pending_weak_notified = false;  // Track if we notified arena of pending weak
     
 protected:
     intrusive_refcount() noexcept = default;
@@ -59,6 +62,13 @@ public:
     void release_ref() const noexcept {
         if (m_strong.fetch_sub(1, std::memory_order_acq_rel) == 1) {
             // Last strong reference gone
+            // Notify arena if we're transitioning to pending weak state
+            bool has_weak_refs = m_weak.load(std::memory_order_acquire) > 1;
+            if (m_arena && has_weak_refs) {
+                m_arena->add_pending_weak();
+                m_pending_weak_notified = true;
+            }
+            
             // Call destroy() which runs the destructor (but doesn't free memory)
             destroy();
             // After destroy(), vtable is invalid - do NOT call virtual functions!
@@ -113,13 +123,21 @@ public:
         return s > 0 ? w - 1 : w;
     }
     
-    // Mark as arena-allocated (used by do_destroy_weak())
-    void set_arena_allocated() noexcept { m_arena_allocated = true; }
+    // Mark as arena-allocated with optional arena pointer for safe reset tracking
+    void set_arena_allocated(slot_arena* arena = nullptr) noexcept { 
+        m_arena_allocated = true; 
+        m_arena = arena;
+    }
     [[nodiscard]] bool is_arena_allocated() const noexcept { return m_arena_allocated; }
+    [[nodiscard]] slot_arena* get_arena() const noexcept { return m_arena; }
     
 private:
     // Non-virtual memory deallocation - safe to call after destructor
     void do_destroy_weak() const noexcept {
+        if (m_arena && m_pending_weak_notified) {
+            // Notify arena that pending weak ref is now cleared
+            m_arena->remove_pending_weak();
+        }
         if (!m_arena_allocated) {
             ::operator delete(const_cast<intrusive_refcount*>(this));
         }

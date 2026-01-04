@@ -2,10 +2,13 @@
 // SPDX-FileCopyrightText: natyamatsya/sigslot26 contributors
 
 #pragma once
+#include <atomic>
+#include <cassert>
 #include <cstddef>
 #include <memory>
 #include <mutex>
 #include <new>
+#include <thread>
 #include <vector>
 
 namespace sigslot::detail {
@@ -35,6 +38,10 @@ class slot_arena {
     
     std::vector<chunk> chunks_;
     std::size_t current_chunk_ = 0;
+    
+    // Track objects with pending weak references (strong=0, weak>0)
+    // Arena reset must wait for this to reach 0
+    std::atomic<std::size_t> pending_weak_refs_{0};
     
 public:
     slot_arena() {
@@ -92,16 +99,71 @@ public:
     }
     
     /**
+     * @brief Notify arena that an object's strong count reached 0 but weak refs remain
+     * 
+     * Called by intrusive_refcount::release_ref() for arena-allocated objects
+     * when transitioning from strong=1 to strong=0 with weak>0.
+     */
+    void add_pending_weak() noexcept {
+        pending_weak_refs_.fetch_add(1, std::memory_order_relaxed);
+    }
+    
+    /**
+     * @brief Notify arena that an object's weak refs have all been released
+     * 
+     * Called by intrusive_refcount::release_weak_ref() for arena-allocated objects
+     * when weak count reaches 0.
+     */
+    void remove_pending_weak() noexcept {
+        pending_weak_refs_.fetch_sub(1, std::memory_order_release);
+    }
+    
+    /**
+     * @brief Check if arena has pending weak references
+     */
+    [[nodiscard]] bool has_pending_weak() const noexcept {
+        return pending_weak_refs_.load(std::memory_order_acquire) > 0;
+    }
+    
+    /**
+     * @brief Wait for all pending weak references to be released
+     * 
+     * Spins until all arena-allocated objects with pending weak refs
+     * have been fully released. Use before reset() in multi-threaded scenarios.
+     */
+    void wait_for_pending_weak() const noexcept {
+        while (has_pending_weak()) {
+            std::this_thread::yield();
+        }
+    }
+    
+    /**
      * @brief Reset arena (reuse chunks without deallocation)
      * 
      * Called when signal is destroyed or all slots disconnected.
      * Keeps chunks allocated for reuse.
+     * 
+     * WARNING: Caller must ensure no weak references exist to arena objects.
+     * Use wait_for_pending_weak() first in multi-threaded scenarios.
      */
     void reset() noexcept {
+        // Assert no pending weak refs in debug builds
+        assert(!has_pending_weak() && "Arena reset with pending weak references!");
+        
         current_chunk_ = 0;
         for (auto& chunk : chunks_) {
             chunk.used = 0;
         }
+    }
+    
+    /**
+     * @brief Safe reset that waits for pending weak references
+     * 
+     * Thread-safe version that ensures all weak refs are released before reset.
+     */
+    void safe_reset() noexcept {
+        wait_for_pending_weak();
+        reset();
     }
     
     /**
