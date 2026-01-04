@@ -1,8 +1,7 @@
 // Phase 6.1 Analysis: Measure slot type sizes and vtable overhead
 // This analysis informs the slot_variant storage layout design
 
-#include <iostream>
-#include <iomanip>
+#include <print>
 #include <cstddef>
 #include <atomic>
 #include <functional>
@@ -40,74 +39,72 @@ using test_lambda_capture = decltype([x = 0](int) mutable { x++; });
 using test_lambda_ext = decltype([](sigslot::connection&, int) {});
 
 int main() {
-    std::cout << "╔══════════════════════════════════════════════════════════════════╗\n";
-    std::cout << "║       Phase 6.1: Slot Type Size Analysis for slot_variant        ║\n";
-    std::cout << "╚══════════════════════════════════════════════════════════════════╝\n\n";
+    std::println("╔══════════════════════════════════════════════════════════════════╗");
+    std::println("║       Phase 6.1: Slot Type Size Analysis for slot_variant        ║");
+    std::println("╚══════════════════════════════════════════════════════════════════╝\n");
 
     // ========================================================================
     // Section 1: Base class sizes (inherited by all slots)
     // ========================================================================
-    std::cout << "┌─────────────────────────────────────────────────────────────────┐\n";
-    std::cout << "│ 1. Base Class Hierarchy Sizes                                   │\n";
-    std::cout << "├─────────────────────────────────────────────────────────────────┤\n";
+    std::println("┌─────────────────────────────────────────────────────────────────┐");
+    std::println("│ 1. Base Class Hierarchy Sizes                                   │");
+    std::println("├─────────────────────────────────────────────────────────────────┤");
 
 #ifdef SIGSLOT_USE_INTRUSIVE_PTR
-    std::cout << "│ Mode: INTRUSIVE_PTR (dual-counter)                              │\n";
-    std::cout << "│   intrusive_refcount:        " << std::setw(3)
-              << sizeof(sigslot::detail::intrusive_refcount)
-              << " bytes                         │\n";
+    std::println("│ Mode: INTRUSIVE_PTR (dual-counter)                              │");
+    std::println("│   intrusive_refcount:        {:>3} bytes                         │",
+                 sizeof(sigslot::detail::intrusive_refcount));
 #else
-    std::cout << "│ Mode: std::shared_ptr                                           │\n";
-    std::cout << "│   enable_shared_from_this:   " << std::setw(3)
-              << sizeof(std::enable_shared_from_this<int>) << " bytes                         │\n";
+    std::println("│ Mode: std::shared_ptr                                           │");
+    std::println("│   enable_shared_from_this:   {:>3} bytes                         │",
+                 sizeof(std::enable_shared_from_this<int>));
 #endif
 
-    std::cout << "│   slot_state:                " << std::setw(3)
-              << sizeof(sigslot::detail::slot_state) << " bytes                         │\n";
-    std::cout << "│     - vtable ptr:              8 bytes                          │\n";
-    std::cout << "│     - m_index (atomic):        8 bytes                          │\n";
-    std::cout << "│     - m_connected (atomic):    1 byte                           │\n";
-    std::cout << "│     - m_blocked (atomic):      1 byte                           │\n";
-    std::cout << "│   grouped_slot<int32_t>:    " << std::setw(3)
-              << sizeof(sigslot::detail::grouped_slot<int32_t>)
-              << " bytes                         │\n";
-    std::cout << "│     - group id:                4 bytes                          │\n";
-    std::cout << "└─────────────────────────────────────────────────────────────────┘\n\n";
+    std::println("│   slot_state:                {:>3} bytes                         │",
+                 sizeof(sigslot::detail::slot_state));
+    std::println("│     - vtable ptr:              8 bytes                          │");
+    std::println("│     - m_index (atomic):        8 bytes                          │");
+    std::println("│     - m_connected (atomic):    1 byte                           │");
+    std::println("│     - m_blocked (atomic):      1 byte                           │");
+    std::println("│   grouped_slot<int32_t>:    {:>3} bytes                         │",
+                 sizeof(sigslot::detail::grouped_slot<int32_t>));
+    std::println("│     - group id:                4 bytes                          │");
+    std::println("└─────────────────────────────────────────────────────────────────┘\n");
 
     // ========================================================================
     // Section 2: Callable storage sizes (what we actually store)
     // ========================================================================
-    std::cout << "┌─────────────────────────────────────────────────────────────────┐\n";
-    std::cout << "│ 2. Callable Storage Sizes                                       │\n";
-    std::cout << "├─────────────────────────────────────────────────────────────────┤\n";
-    std::cout << "│ Type                              Size    Notes                 │\n";
-    std::cout << "├─────────────────────────────────────────────────────────────────┤\n";
-    std::cout << "│ void(*)(int)                      " << std::setw(3) << sizeof(void (*)(int))
-              << "     Function pointer         │\n";
-    std::cout << "│ void(TestClass::*)(int)           " << std::setw(3)
-              << sizeof(void(TestClass::*)(int)) << "     PMF (may vary by compiler)│\n";
-    std::cout << "│ TestClass*                        " << std::setw(3) << sizeof(TestClass*)
-              << "     Object pointer           │\n";
-    std::cout << "│ std::weak_ptr<TestClass>          " << std::setw(3)
-              << sizeof(std::weak_ptr<TestClass>) << "     For tracked slots        │\n";
-    std::cout << "│ std::shared_ptr<TestClass>        " << std::setw(3)
-              << sizeof(std::shared_ptr<TestClass>) << "     For tracked slots        │\n";
-    std::cout << "│ std::function<void(int)>          " << std::setw(3)
-              << sizeof(std::function<void(int)>) << "     Type-erased callable     │\n";
-    std::cout << "│ test_lambda (no capture)          " << std::setw(3) << sizeof(test_lambda)
-              << "     Stateless lambda         │\n";
-    std::cout << "│ test_lambda_capture               " << std::setw(3)
-              << sizeof(test_lambda_capture) << "     Lambda with int capture  │\n";
-    std::cout << "│ sigslot::connection               " << std::setw(3)
-              << sizeof(sigslot::connection) << "     For extended slots       │\n";
-    std::cout << "└─────────────────────────────────────────────────────────────────┘\n\n";
+    std::println("┌─────────────────────────────────────────────────────────────────┐");
+    std::println("│ 2. Callable Storage Sizes                                       │");
+    std::println("├─────────────────────────────────────────────────────────────────┤");
+    std::println("│ Type                              Size    Notes                 │");
+    std::println("├─────────────────────────────────────────────────────────────────┤");
+    std::println("│ void(*)(int)                      {:>3}     Function pointer         │",
+                 sizeof(void (*)(int)));
+    std::println("│ void(TestClass::*)(int)           {:>3}     PMF (may vary by compiler)│",
+                 sizeof(void(TestClass::*)(int)));
+    std::println("│ TestClass*                        {:>3}     Object pointer           │",
+                 sizeof(TestClass*));
+    std::println("│ std::weak_ptr<TestClass>          {:>3}     For tracked slots        │",
+                 sizeof(std::weak_ptr<TestClass>));
+    std::println("│ std::shared_ptr<TestClass>        {:>3}     For tracked slots        │",
+                 sizeof(std::shared_ptr<TestClass>));
+    std::println("│ std::function<void(int)>          {:>3}     Type-erased callable     │",
+                 sizeof(std::function<void(int)>));
+    std::println("│ test_lambda (no capture)          {:>3}     Stateless lambda         │",
+                 sizeof(test_lambda));
+    std::println("│ test_lambda_capture               {:>3}     Lambda with int capture  │",
+                 sizeof(test_lambda_capture));
+    std::println("│ sigslot::connection               {:>3}     For extended slots       │",
+                 sizeof(sigslot::connection));
+    std::println("└─────────────────────────────────────────────────────────────────┘\n");
 
     // ========================================================================
     // Section 3: Estimated slot_variant storage requirements
     // ========================================================================
-    std::cout << "┌─────────────────────────────────────────────────────────────────┐\n";
-    std::cout << "│ 3. Estimated slot_variant Storage (without inheritance)         │\n";
-    std::cout << "├─────────────────────────────────────────────────────────────────┤\n";
+    std::println("┌─────────────────────────────────────────────────────────────────┐");
+    std::println("│ 3. Estimated slot_variant Storage (without inheritance)         │");
+    std::println("├─────────────────────────────────────────────────────────────────┤");
 
     // Calculate storage needed for each slot type variant
     // slot<G, F, Args...>: just stores std::decay_t<Func>
@@ -129,23 +126,23 @@ int main() {
     // slot_pmf_extended: PMF + Ptr + connection
     size_t pmf_extended_storage = pmf_storage + sizeof(sigslot::connection);
 
-    std::cout << "│ Slot Type             Callable Storage   Total Estimate        │\n";
-    std::cout << "├─────────────────────────────────────────────────────────────────┤\n";
-    std::cout << "│ plain (stateless λ)        " << std::setw(3) << plain_lambda
-              << " bytes       (minimal)              │\n";
-    std::cout << "│ plain (capture λ)          " << std::setw(3) << plain_capture
-              << " bytes       (+ capture size)        │\n";
-    std::cout << "│ pmf                        " << std::setw(3) << pmf_storage
-              << " bytes       PMF + object ptr        │\n";
-    std::cout << "│ tracked                    " << std::setw(3) << tracked_storage
-              << " bytes       λ + weak_ptr            │\n";
-    std::cout << "│ pmf_tracked                " << std::setw(3) << pmf_tracked_storage
-              << " bytes       PMF + weak_ptr          │\n";
-    std::cout << "│ extended                   " << std::setw(3) << extended_storage
-              << " bytes       λ + connection          │\n";
-    std::cout << "│ pmf_extended               " << std::setw(3) << pmf_extended_storage
-              << " bytes       PMF + ptr + connection  │\n";
-    std::cout << "└─────────────────────────────────────────────────────────────────┘\n\n";
+    std::println("│ Slot Type             Callable Storage   Total Estimate        │");
+    std::println("├─────────────────────────────────────────────────────────────────┤");
+    std::println("│ plain (stateless λ)        {:>3} bytes       (minimal)              │",
+                 plain_lambda);
+    std::println("│ plain (capture λ)          {:>3} bytes       (+ capture size)        │",
+                 plain_capture);
+    std::println("│ pmf                        {:>3} bytes       PMF + object ptr        │",
+                 pmf_storage);
+    std::println("│ tracked                    {:>3} bytes       λ + weak_ptr            │",
+                 tracked_storage);
+    std::println("│ pmf_tracked                {:>3} bytes       PMF + weak_ptr          │",
+                 pmf_tracked_storage);
+    std::println("│ extended                   {:>3} bytes       λ + connection          │",
+                 extended_storage);
+    std::println("│ pmf_extended               {:>3} bytes       PMF + ptr + connection  │",
+                 pmf_extended_storage);
+    std::println("└─────────────────────────────────────────────────────────────────┘\n");
 
     // ========================================================================
     // Section 4: Recommended slot_variant layout
@@ -159,85 +156,85 @@ int main() {
     // Round up to alignment
     max_storage = (max_storage + 7) & ~7;
 
-    std::cout << "┌─────────────────────────────────────────────────────────────────┐\n";
-    std::cout << "│ 4. Recommended slot_variant Layout                              │\n";
-    std::cout << "├─────────────────────────────────────────────────────────────────┤\n";
-    std::cout << "│                                                                 │\n";
-    std::cout << "│ struct slot_variant {                                           │\n";
-    std::cout << "│     // Hot data (accessed every emission)                       │\n";
-    std::cout << "│     call_fn call_;                    //  8 bytes               │\n";
-    std::cout << "│     atomic<bool> connected_;          //  1 byte                │\n";
-    std::cout << "│     atomic<bool> blocked_;            //  1 byte                │\n";
-    std::cout << "│     slot_tag tag_;                    //  1 byte                │\n";
-    std::cout << "│     uint8_t padding_[5];              //  5 bytes (align)       │\n";
-    std::cout << "│                                       // ─────────              │\n";
-    std::cout << "│                                       // 16 bytes hot           │\n";
-    std::cout << "│                                                                 │\n";
-    std::cout << "│     // Cold data (accessed on connect/disconnect)               │\n";
-    std::cout << "│     atomic<size_t> index_;            //  8 bytes               │\n";
-    std::cout << "│     Group group_;                     //  4 bytes               │\n";
-    std::cout << "│     uint8_t padding2_[4];             //  4 bytes (align)       │\n";
-    std::cout << "│                                       // ─────────              │\n";
-    std::cout << "│                                       // 16 bytes cold          │\n";
-    std::cout << "│                                                                 │\n";
-    std::cout << "│     // Variant storage                                          │\n";
-    std::cout << "│     alignas(8) byte storage_[" << std::setw(2) << max_storage << "];     // "
-              << std::setw(2) << max_storage << " bytes max         │\n";
-    std::cout << "│                                       // ─────────              │\n";
-    std::cout << "│     // Total: " << std::setw(2) << (32 + max_storage)
-              << " bytes                                       │\n";
-    std::cout << "│ };                                                              │\n";
-    std::cout << "│                                                                 │\n";
-    std::cout << "└─────────────────────────────────────────────────────────────────┘\n\n";
+    std::println("┌─────────────────────────────────────────────────────────────────┐");
+    std::println("│ 4. Recommended slot_variant Layout                              │");
+    std::println("├─────────────────────────────────────────────────────────────────┤");
+    std::println("│                                                                 │");
+    std::println("│ struct slot_variant {{                                           │");
+    std::println("│     // Hot data (accessed every emission)                       │");
+    std::println("│     call_fn call_;                    //  8 bytes               │");
+    std::println("│     atomic<bool> connected_;          //  1 byte                │");
+    std::println("│     atomic<bool> blocked_;            //  1 byte                │");
+    std::println("│     slot_tag tag_;                    //  1 byte                │");
+    std::println("│     uint8_t padding_[5];              //  5 bytes (align)       │");
+    std::println("│                                       // ─────────              │");
+    std::println("│                                       // 16 bytes hot           │");
+    std::println("│                                                                 │");
+    std::println("│     // Cold data (accessed on connect/disconnect)               │");
+    std::println("│     atomic<size_t> index_;            //  8 bytes               │");
+    std::println("│     Group group_;                     //  4 bytes               │");
+    std::println("│     uint8_t padding2_[4];             //  4 bytes (align)       │");
+    std::println("│                                       // ─────────              │");
+    std::println("│                                       // 16 bytes cold          │");
+    std::println("│                                                                 │");
+    std::println("│     // Variant storage                                          │");
+    std::println("│     alignas(8) byte storage_[{:>2}];     // {:>2} bytes max         │",
+                 max_storage, max_storage);
+    std::println("│                                       // ─────────              │");
+    std::println("│     // Total: {:>2} bytes                                       │",
+                 32 + max_storage);
+    std::println("│ }};                                                              │");
+    std::println("│                                                                 │");
+    std::println("└─────────────────────────────────────────────────────────────────┘\n");
 
     // ========================================================================
     // Section 5: Performance impact analysis
     // ========================================================================
-    std::cout << "┌─────────────────────────────────────────────────────────────────┐\n";
-    std::cout << "│ 5. Performance Impact Analysis                                  │\n";
-    std::cout << "├─────────────────────────────────────────────────────────────────┤\n";
-    std::cout << "│                                                                 │\n";
-    std::cout << "│ Current (virtual dispatch):                                     │\n";
-    std::cout << "│   1. Load vtable ptr from slot object     ~1 cycle (L1 hit)     │\n";
-    std::cout << "│   2. Load call_slot ptr from vtable       ~1 cycle (L1 hit)     │\n";
-    std::cout << "│   3. Indirect call                        ~3-5 cycles           │\n";
-    std::cout << "│   4. Branch misprediction                 ~15-20 cycles (rare)  │\n";
-    std::cout << "│   Total: ~5-25 cycles overhead per slot                         │\n";
-    std::cout << "│                                                                 │\n";
-    std::cout << "│ Proposed (inline fn ptr):                                       │\n";
-    std::cout << "│   1. Load call_ fn ptr from slot_variant  ~1 cycle (L1 hit)     │\n";
-    std::cout << "│   2. Indirect call                        ~3-5 cycles           │\n";
-    std::cout << "│   Total: ~4-6 cycles overhead per slot                          │\n";
-    std::cout << "│                                                                 │\n";
-    std::cout << "│ Expected speedup: ~2-4x for emission hot path                   │\n";
-    std::cout << "│                                                                 │\n";
-    std::cout << "│ Additional benefits:                                            │\n";
-    std::cout << "│   - Better cache locality (no vtable chase)                     │\n";
-    std::cout << "│   - Smaller object size (no vtable ptr per slot)                │\n";
-    std::cout << "│   - Potential for inlining with LTO                             │\n";
-    std::cout << "│                                                                 │\n";
-    std::cout << "└─────────────────────────────────────────────────────────────────┘\n\n";
+    std::println("┌─────────────────────────────────────────────────────────────────┐");
+    std::println("│ 5. Performance Impact Analysis                                  │");
+    std::println("├─────────────────────────────────────────────────────────────────┤");
+    std::println("│                                                                 │");
+    std::println("│ Current (virtual dispatch):                                     │");
+    std::println("│   1. Load vtable ptr from slot object     ~1 cycle (L1 hit)     │");
+    std::println("│   2. Load call_slot ptr from vtable       ~1 cycle (L1 hit)     │");
+    std::println("│   3. Indirect call                        ~3-5 cycles           │");
+    std::println("│   4. Branch misprediction                 ~15-20 cycles (rare)  │");
+    std::println("│   Total: ~5-25 cycles overhead per slot                         │");
+    std::println("│                                                                 │");
+    std::println("│ Proposed (inline fn ptr):                                       │");
+    std::println("│   1. Load call_ fn ptr from slot_variant  ~1 cycle (L1 hit)     │");
+    std::println("│   2. Indirect call                        ~3-5 cycles           │");
+    std::println("│   Total: ~4-6 cycles overhead per slot                          │");
+    std::println("│                                                                 │");
+    std::println("│ Expected speedup: ~2-4x for emission hot path                   │");
+    std::println("│                                                                 │");
+    std::println("│ Additional benefits:                                            │");
+    std::println("│   - Better cache locality (no vtable chase)                     │");
+    std::println("│   - Smaller object size (no vtable ptr per slot)                │");
+    std::println("│   - Potential for inlining with LTO                             │");
+    std::println("│                                                                 │");
+    std::println("└─────────────────────────────────────────────────────────────────┘\n");
 
     // ========================================================================
     // Section 6: Design recommendations
     // ========================================================================
-    std::cout << "┌─────────────────────────────────────────────────────────────────┐\n";
-    std::cout << "│ 6. Design Recommendations                                       │\n";
-    std::cout << "├─────────────────────────────────────────────────────────────────┤\n";
-    std::cout << "│                                                                 │\n";
-    std::cout << "│ ✓ Use inline function pointer for call (eliminates vtable)      │\n";
-    std::cout << "│ ✓ Use uint8_t tag for slot type (only 7 types needed)           │\n";
-    std::cout << "│ ✓ Pack hot data together (call_, connected_, blocked_, tag_)    │\n";
-    std::cout << "│ ✓ Storage size: 48-64 bytes covers most callables               │\n";
-    std::cout << "│ ✓ Support dynamic fallback for oversized callables              │\n";
-    std::cout << "│ ✓ Use switch for cold paths (connected check for tracked)       │\n";
-    std::cout << "│                                                                 │\n";
-    std::cout << "│ Storage recommendation: 64 bytes                                │\n";
-    std::cout << "│   - Covers std::function (32 bytes on most platforms)           │\n";
-    std::cout << "│   - Covers lambdas with moderate captures                       │\n";
-    std::cout << "│   - Aligns well with cache lines                                │\n";
-    std::cout << "│                                                                 │\n";
-    std::cout << "└─────────────────────────────────────────────────────────────────┘\n";
+    std::println("┌─────────────────────────────────────────────────────────────────┐");
+    std::println("│ 6. Design Recommendations                                       │");
+    std::println("├─────────────────────────────────────────────────────────────────┤");
+    std::println("│                                                                 │");
+    std::println("│ ✓ Use inline function pointer for call (eliminates vtable)      │");
+    std::println("│ ✓ Use uint8_t tag for slot type (only 7 types needed)           │");
+    std::println("│ ✓ Pack hot data together (call_, connected_, blocked_, tag_)    │");
+    std::println("│ ✓ Storage size: 48-64 bytes covers most callables               │");
+    std::println("│ ✓ Support dynamic fallback for oversized callables              │");
+    std::println("│ ✓ Use switch for cold paths (connected check for tracked)       │");
+    std::println("│                                                                 │");
+    std::println("│ Storage recommendation: 64 bytes                                │");
+    std::println("│   - Covers std::function (32 bytes on most platforms)           │");
+    std::println("│   - Covers lambdas with moderate captures                       │");
+    std::println("│   - Aligns well with cache lines                                │");
+    std::println("│                                                                 │");
+    std::println("└─────────────────────────────────────────────────────────────────┘");
 
     return 0;
 }

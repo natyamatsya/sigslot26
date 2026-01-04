@@ -27,8 +27,7 @@
 #include <chrono>
 #include <cmath>
 #include <numbers>
-#include <iomanip>
-#include <iostream>
+#include <print>
 #include <mutex>
 #include <random>
 #include <thread>
@@ -152,17 +151,14 @@ void display_progress(const progress_aggregator& aggregator, uint64_t num_worker
         double error = std::abs(pi - std::numbers::pi);
 
         // Move cursor up and clear lines
-        std::cout << "\033[4A"; // Move up 4 lines
+        std::print("\033[4A"); // Move up 4 lines
 
-        std::cout << color::bold << "Parallel Monte Carlo π Estimation" << color::reset << "\n";
-        std::cout << color::cyan << "[" << bar << "] " << color::yellow << std::fixed
-                  << std::setprecision(1) << (progress * 100) << "%" << color::reset << "\n";
-        std::cout << "π estimate: " << color::green << std::setprecision(10) << pi << color::reset
-                  << "  (error: " << color::yellow << std::scientific << std::setprecision(2)
-                  << error << color::reset << ")\n";
-        std::cout << "Workers: " << completed << "/" << num_workers << " complete, " << samples
-                  << " samples\n"
-                  << std::flush;
+        std::println("{}Parallel Monte Carlo π Estimation{}", color::bold, color::reset);
+        std::println("{}[{}] {}{:.1f}%{}", color::cyan, bar, color::yellow, progress * 100,
+                     color::reset);
+        std::println("π estimate: {}{:.10f}{}  (error: {}{:.2e}{})", color::green, pi, color::reset,
+                     color::yellow, error, color::reset);
+        std::print("Workers: {}/{} complete, {} samples\n", completed, num_workers, samples);
 
         std::this_thread::sleep_for(std::chrono::milliseconds(50));
     }
@@ -389,8 +385,7 @@ void run_with_coroutines(stress_signals& signals, progress_aggregator& aggregato
         for (auto e : pi_estimates)
             avg += e;
         avg /= static_cast<double>(pi_estimates.size());
-        std::cout << "  (Coroutine collected " << pi_estimates.size() << " estimates, avg: " << avg
-                  << ")\n";
+        std::println("  (Coroutine collected {} estimates, avg: {})", pi_estimates.size(), avg);
     }
 }
 #endif // SIGSLOT_EXECUTION_AVAILABLE
@@ -408,19 +403,19 @@ int main(int argc, char* argv[]) {
         else if (arg == "stdexec")
             mode = execution_mode::stdexec;
         else {
-            std::cerr << "Usage: " << argv[0] << " [stdexec|threads|coroutines]\n";
+            std::println(stderr, "Usage: {} [stdexec|threads|coroutines]", argv[0]);
             return 1;
         }
     }
 
 #if !SIGSLOT_EXECUTION_AVAILABLE
     if (mode != execution_mode::threads) {
-        std::cerr << "stdexec not available, falling back to threads mode\n";
+        std::println(stderr, "stdexec not available, falling back to threads mode");
         mode = execution_mode::threads;
     }
 #endif
 
-    std::cout << "\n\n\n\n"; // Make room for display
+    std::print("\n\n\n\n"); // Make room for display
 
     // Allow overriding worker count via second argument (default: hardware_concurrency)
     unsigned int num_workers = std::thread::hardware_concurrency();
@@ -433,11 +428,10 @@ int main(int argc, char* argv[]) {
                             : mode == execution_mode::coroutines ? "coroutines"
                                                                  : "threads";
 
-    std::cout << color::bold << "sigslot26 Stress Test" << color::reset << "\n";
-    std::cout << "Mode: " << color::cyan << mode_name << color::reset << "\n";
-    std::cout << "Using " << num_workers << " worker threads\n";
-    std::cout << "Total samples: " << (static_cast<uint64_t>(num_workers) * samples_per_worker)
-              << "\n\n";
+    std::println("{}sigslot26 Stress Test{}", color::bold, color::reset);
+    std::println("Mode: {}{}{}", color::cyan, mode_name, color::reset);
+    std::println("Using {} worker threads", num_workers);
+    std::println("Total samples: {}\n", static_cast<uint64_t>(num_workers) * samples_per_worker);
 
     stress_signals signals;
     progress_aggregator aggregator(num_workers);
@@ -478,22 +472,19 @@ int main(int argc, char* argv[]) {
     // Final results
     auto [final_pi, total_samples, completed] = aggregator.get_aggregate();
 
-    std::cout << "\n" << color::bold << "Results:" << color::reset << "\n";
-    std::cout << "  Final π estimate: " << color::green << std::fixed << std::setprecision(10)
-              << final_pi << color::reset << "\n";
-    std::cout << "  Actual π:         " << std::numbers::pi << "\n";
-    std::cout << "  Error:            " << color::yellow << std::scientific << std::setprecision(2)
-              << std::abs(final_pi - std::numbers::pi) << color::reset << "\n";
-    std::cout << "  Duration:         " << duration.count() << " ms\n";
-    std::cout << "  Throughput:       " << std::fixed << std::setprecision(1)
-              << (static_cast<double>(total_samples) / 1e6) /
-                     (static_cast<double>(duration.count()) / 1000.0)
-              << " M samples/sec\n";
-    std::cout << "  Connect/disconnect churn: " << churn_count << " operations\n";
-    std::cout << "  Slot count at end: " << signals.worker_progress.slot_count() << "\n";
+    std::println("\n{}Results:{}", color::bold, color::reset);
+    std::println("  Final π estimate: {}{:.10f}{}", color::green, final_pi, color::reset);
+    std::println("  Actual π:         {:.10f}", std::numbers::pi);
+    std::println("  Error:            {}{:.2e}{}", color::yellow,
+                 std::abs(final_pi - std::numbers::pi), color::reset);
+    std::println("  Duration:         {} ms", duration.count());
+    std::println("  Throughput:       {:.1f} M samples/sec",
+                 (static_cast<double>(total_samples) / 1e6) /
+                     (static_cast<double>(duration.count()) / 1000.0));
+    std::println("  Connect/disconnect churn: {} operations", churn_count.load());
+    std::println("  Slot count at end: {}", signals.worker_progress.slot_count());
 
-    std::cout << "\n"
-              << color::green << "✓ Stress test completed successfully!" << color::reset << "\n\n";
+    std::println("\n{}✓ Stress test completed successfully!{}\n", color::green, color::reset);
 
     return 0;
 }
