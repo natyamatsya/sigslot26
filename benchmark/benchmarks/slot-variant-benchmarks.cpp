@@ -326,6 +326,26 @@ static void BM_SignalInlineRCU_10Slots(benchmark::State& state) {
     }
 }
 
+static void BM_SignalInlineSeqlock_SingleSlot(benchmark::State& state) {
+    sigslot::signal_inline_seqlock<int> sig;
+    sig.connect([](int x) { benchmark::DoNotOptimize(x); });
+    
+    for (auto _ : state) {
+        sig(42);
+    }
+}
+
+static void BM_SignalInlineSeqlock_10Slots(benchmark::State& state) {
+    sigslot::signal_inline_seqlock<int> sig;
+    for (int i = 0; i < 10; ++i) {
+        sig.connect([](int x) { benchmark::DoNotOptimize(x); });
+    }
+    
+    for (auto _ : state) {
+        sig(42);
+    }
+}
+
 // ============================================================================
 // Register benchmarks
 // ============================================================================
@@ -363,6 +383,8 @@ BENCHMARK(BM_SignalInlineRW_SingleSlot);
 BENCHMARK(BM_SignalInlineRW_10Slots);
 BENCHMARK(BM_SignalInlineRCU_SingleSlot);
 BENCHMARK(BM_SignalInlineRCU_10Slots);
+BENCHMARK(BM_SignalInlineSeqlock_SingleSlot);
+BENCHMARK(BM_SignalInlineSeqlock_10Slots);
 
 // Size analysis
 BENCHMARK(BM_SlotVariant_SizeOf);

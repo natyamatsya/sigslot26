@@ -152,9 +152,17 @@ private:
  * 
  * Optimized for read-heavy workloads (many emissions, few connections).
  * Multiple threads can emit simultaneously; connect/disconnect acquires exclusive lock.
+ * 
+ * Optional optimizations (controlled via CMake):
+ * - SIGSLOT_CACHE_LINE_PADDING: Separate hot/cold data into different cache lines
+ * - SIGSLOT_INDEX_CACHING: Cache slot count to avoid size() call on hot path
  */
 template<typename... T>
 class signal_inline_rw {
+#ifdef SIGSLOT_CACHE_LINE_PADDING
+    static constexpr std::size_t cache_line_size = 64;
+#endif
+    
 public:
     using group_id = int32_t;
     using slot_type = detail::slot_variant<group_id, T...>;
@@ -171,6 +179,9 @@ public:
     void connect(Callable&& c, group_id gid = group_id{}) {
         std::unique_lock lock(mutex_);
         slots_.push_back(slot_type::make_plain(std::forward<Callable>(c), gid));
+#ifdef SIGSLOT_INDEX_CACHING
+        slot_count_cache_.store(slots_.size(), std::memory_order_release);
+#endif
     }
     
     template<typename Pmf, typename Ptr>
@@ -181,13 +192,20 @@ public:
             std::forward<Ptr>(ptr), 
             gid
         ));
+#ifdef SIGSLOT_INDEX_CACHING
+        slot_count_cache_.store(slots_.size(), std::memory_order_release);
+#endif
     }
     
     template<typename... U>
     void operator()(U&&... args) {
-        std::shared_lock lock(mutex_);
         if (blocked_.load(std::memory_order_relaxed)) return;
+#ifdef SIGSLOT_INDEX_CACHING
+        // Fast path: check cached slot count before acquiring lock
+        if (slot_count_cache_.load(std::memory_order_acquire) == 0) return;
+#endif
         
+        std::shared_lock lock(mutex_);
         for (auto& slot : slots_) {
             slot(std::forward<U>(args)...);
         }
@@ -196,20 +214,45 @@ public:
     void disconnect_all() {
         std::unique_lock lock(mutex_);
         slots_.clear();
+#ifdef SIGSLOT_INDEX_CACHING
+        slot_count_cache_.store(0, std::memory_order_release);
+#endif
     }
     
     void block() noexcept { blocked_.store(true, std::memory_order_relaxed); }
     void unblock() noexcept { blocked_.store(false, std::memory_order_relaxed); }
     
-    [[nodiscard]] std::size_t slot_count() const {
+    [[nodiscard]] std::size_t slot_count() const noexcept {
+#ifdef SIGSLOT_INDEX_CACHING
+        return slot_count_cache_.load(std::memory_order_acquire);
+#else
         std::shared_lock lock(mutex_);
         return slots_.size();
+#endif
     }
 
 private:
-    std::vector<slot_type> slots_;
-    mutable std::shared_mutex mutex_;
+    // ========================================================================
+    // Hot data - read on every emission
+    // ========================================================================
+#ifdef SIGSLOT_CACHE_LINE_PADDING
+    alignas(cache_line_size) std::atomic<bool> blocked_{false};
+#else
     std::atomic<bool> blocked_{false};
+#endif
+#ifdef SIGSLOT_INDEX_CACHING
+    std::atomic<std::size_t> slot_count_cache_{0};
+#endif
+    
+    // ========================================================================
+    // Cold data - accessed only during connect/disconnect
+    // ========================================================================
+#ifdef SIGSLOT_CACHE_LINE_PADDING
+    alignas(cache_line_size) mutable std::shared_mutex mutex_;
+#else
+    mutable std::shared_mutex mutex_;
+#endif
+    std::vector<slot_type> slots_;
 };
 
 /**
@@ -220,9 +263,15 @@ private:
  * 
  * Trade-off: Uses pointer indirection for slots (like signal_base),
  * but with slot_variant's faster dispatch.
+ * 
+ * Optional: SIGSLOT_CACHE_LINE_PADDING separates hot and cold data.
  */
 template<typename... T>
 class signal_inline_rcu {
+#ifdef SIGSLOT_CACHE_LINE_PADDING
+    static constexpr std::size_t cache_line_size = 64;
+#endif
+    
 public:
     using group_id = int32_t;
     using slot_type = detail::slot_variant<group_id, T...>;
@@ -308,9 +357,150 @@ public:
     }
 
 private:
+    // ========================================================================
+    // Hot data - read on every emission
+    // ========================================================================
+#ifdef SIGSLOT_CACHE_LINE_PADDING
+    alignas(cache_line_size) std::atomic<std::shared_ptr<slot_list>> slots_;
+#else
     std::atomic<std::shared_ptr<slot_list>> slots_;
-    std::mutex write_mutex_;  // Serializes writers only
+#endif
     std::atomic<bool> blocked_{false};
+    
+    // ========================================================================
+    // Cold data - accessed only during connect/disconnect
+    // ========================================================================
+#ifdef SIGSLOT_CACHE_LINE_PADDING
+    alignas(cache_line_size) std::mutex write_mutex_;
+#else
+    std::mutex write_mutex_;
+#endif
+};
+
+/**
+ * @brief Lock-free signal using seqlock pattern
+ * 
+ * Readers (emitters) are wait-free when no writer is active.
+ * If a writer is detected during emission, the reader retries.
+ * Writers are serialized via mutex but don't block readers.
+ * 
+ * Best for: Read-heavy workloads where emissions vastly outnumber connects.
+ * Trade-off: Readers may retry if emission overlaps with connect/disconnect.
+ */
+template<typename... T>
+class signal_inline_seqlock {
+#ifdef SIGSLOT_CACHE_LINE_PADDING
+    static constexpr std::size_t cache_line_size = 64;
+#endif
+    
+public:
+    using group_id = int32_t;
+    using slot_type = detail::slot_variant<group_id, T...>;
+    
+    signal_inline_seqlock() = default;
+    ~signal_inline_seqlock() = default;
+    
+    signal_inline_seqlock(const signal_inline_seqlock&) = delete;
+    signal_inline_seqlock& operator=(const signal_inline_seqlock&) = delete;
+    signal_inline_seqlock(signal_inline_seqlock&&) = delete;
+    signal_inline_seqlock& operator=(signal_inline_seqlock&&) = delete;
+    
+    template<typename Callable>
+    void connect(Callable&& c, group_id gid = group_id{}) {
+        std::lock_guard lock(write_mutex_);
+        begin_write();
+        slots_.push_back(slot_type::make_plain(std::forward<Callable>(c), gid));
+        end_write();
+    }
+    
+    template<typename Pmf, typename Ptr>
+    void connect(Pmf&& pmf, Ptr&& ptr, group_id gid = group_id{}) {
+        std::lock_guard lock(write_mutex_);
+        begin_write();
+        slots_.push_back(slot_type::make_pmf(
+            std::forward<Pmf>(pmf), 
+            std::forward<Ptr>(ptr), 
+            gid
+        ));
+        end_write();
+    }
+    
+    /**
+     * @brief Lock-free emission with retry on concurrent write
+     */
+    template<typename... U>
+    void operator()(U&&... args) {
+        if (blocked_.load(std::memory_order_relaxed)) return;
+        
+        std::uint64_t seq;
+        do {
+            seq = seq_.load(std::memory_order_acquire);
+            
+            // If write in progress (odd sequence), spin-wait
+            if (seq & 1) {
+                // Could add backoff here for high-contention scenarios
+                continue;
+            }
+            
+            // Read slots and emit
+            for (std::size_t i = 0; i < slots_.size(); ++i) {
+                slots_[i](std::forward<U>(args)...);
+            }
+            
+            // Check if sequence changed during our read
+        } while (seq_.load(std::memory_order_acquire) != seq);
+    }
+    
+    void disconnect_all() {
+        std::lock_guard lock(write_mutex_);
+        begin_write();
+        slots_.clear();
+        end_write();
+    }
+    
+    void block() noexcept { blocked_.store(true, std::memory_order_relaxed); }
+    void unblock() noexcept { blocked_.store(false, std::memory_order_relaxed); }
+    
+    [[nodiscard]] std::size_t slot_count() const noexcept {
+        // Read with seqlock consistency
+        std::uint64_t seq;
+        std::size_t count;
+        do {
+            seq = seq_.load(std::memory_order_acquire);
+            if (seq & 1) continue;
+            count = slots_.size();
+        } while (seq_.load(std::memory_order_acquire) != seq);
+        return count;
+    }
+
+private:
+    void begin_write() noexcept {
+        seq_.fetch_add(1, std::memory_order_release);  // Odd = write in progress
+    }
+    
+    void end_write() noexcept {
+        seq_.fetch_add(1, std::memory_order_release);  // Even = write complete
+    }
+
+    // ========================================================================
+    // Hot data - read on every emission
+    // ========================================================================
+#ifdef SIGSLOT_CACHE_LINE_PADDING
+    alignas(cache_line_size) std::atomic<std::uint64_t> seq_{0};
+#else
+    std::atomic<std::uint64_t> seq_{0};
+#endif
+    std::atomic<bool> blocked_{false};
+    std::vector<slot_type> slots_;
+    
+    // ========================================================================
+    // Cold data - accessed only during connect/disconnect
+    // ========================================================================
+#ifdef SIGSLOT_CACHE_LINE_PADDING
+    alignas(cache_line_size) std::mutex write_mutex_;
+#else
+    std::mutex write_mutex_;
+#endif
 };
 
 } // namespace sigslot

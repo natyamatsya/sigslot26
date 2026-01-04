@@ -656,6 +656,127 @@ class slot_variant_closed {
 
 **Trade-off**: Maximum speed vs extensibility. Offer as `signal_fast<Args...>` alias.
 
+#### 6.8 Advanced Concurrency Patterns (Research)
+**Status**: 📋 Research Complete  
+**Milestone**: Identify next-generation optimizations
+
+Research into data structures and concurrency patterns for further signal/slot optimization.
+
+##### 6.8.1 Memory Reclamation Strategies
+
+| Strategy | Pros | Cons | Use Case |
+|----------|------|------|----------|
+| **Hazard Pointers** | Fine-grained, per-pointer protection | Memory overhead, complex API | Few concurrent readers |
+| **Epoch-Based (RCU)** | Simple API, low overhead | Delayed reclamation, grace periods | Read-heavy workloads |
+| **Interval-Based (IBR)** | Combines HP + Epoch benefits | More complex implementation | Mixed workloads |
+
+**Conclusion**: Current RCU approach is optimal. C++26 may include `std::hazard_pointer` (P2530).
+
+##### 6.8.2 Lock-Free Data Structures
+
+From [libcds](https://github.com/khizmax/libcds):
+
+| Structure | Description | Applicability |
+|-----------|-------------|---------------|
+| **Michael-Scott Queue** | Classic lock-free FIFO | Async slot queuing |
+| **Flat Combining** | Batch operations by combiner thread | High-contention connects |
+| **Skip List** | Lock-free ordered container | Grouped/prioritized slots |
+| **Segmented Queue** | Relaxed FIFO, better scalability | Many producers/consumers |
+
+**Flat Combining** batches pending operations via a combiner thread, reducing contention.
+Could be useful for signals with many concurrent `connect()` calls.
+
+##### 6.8.3 Cache-Optimized Patterns
+
+| Pattern | Technique | Benefit |
+|---------|-----------|---------|
+| **Index Caching** | Cache remote index locally | 20x throughput (5M → 112M ops/s) |
+| **Cache Line Padding** | `alignas(64)` for hot variables | Eliminate false sharing |
+| **Batched Operations** | Amortize atomic updates | Fewer cache coherency messages |
+
+Example from [Erik Rigtorp's optimized ring buffer](https://rigtorp.se/ringbuffer/):
+```cpp
+struct optimized_buffer {
+    alignas(64) std::atomic<size_t> readIdx_{0};
+    alignas(64) size_t writeIdxCached_{0};  // Reader's local cache
+    alignas(64) std::atomic<size_t> writeIdx_{0};
+    alignas(64) size_t readIdxCached_{0};   // Writer's local cache
+};
+```
+
+##### 6.8.4 Left-Right Concurrency Pattern
+
+Maintain two copies of data structure; readers use one while writer updates the other.
+From [Concurrency Freaks](http://concurrencyfreaks.blogspot.com/2013/12/left-right-classical-algorithm.html):
+
+```
+Reader (wait-free):
+1. Check versionIndex → increment readersVersion[versionIndex]
+2. Read from leftRight instance
+3. Decrement readersVersion
+
+Writer (serialized):
+1. Lock writersMutex
+2. Update inactive instance
+3. Toggle leftRight
+4. Wait for readers on old version to drain
+5. Update other instance
+6. Unlock
+```
+
+**Benefit**: Wait-free reads, serialized writes. Ideal for emission (reads) vs connect/disconnect (writes).
+
+##### 6.8.5 Seqlock (Sequence Lock)
+
+Optimistic concurrency for read-dominated workloads:
+
+```cpp
+struct seqlock_signal {
+    std::atomic<uint64_t> seq_{0};
+    std::vector<slot_variant> slots_;
+    
+    void emit(auto&&... args) {
+        uint64_t s;
+        do {
+            s = seq_.load(std::memory_order_acquire);
+            if (s & 1) continue;  // Writer active, retry
+            for (auto& slot : slots_) slot(args...);
+        } while (seq_.load(std::memory_order_acquire) != s);
+    }
+    
+    void connect(auto&& callable) {
+        seq_.fetch_add(1);  // Mark write in progress
+        slots_.push_back(/*...*/);
+        seq_.fetch_add(1);  // Mark write complete
+    }
+};
+```
+
+**Trade-off**: Readers retry if writer is active. Best when writes are rare.
+
+##### 6.8.6 Implementation Priority
+
+| Priority | Pattern | Benefit | Effort |
+|----------|---------|---------|--------|
+| **High** | Cache line padding (`alignas(64)`) | Eliminate false sharing | Low |
+| **High** | Index caching | Reduce atomic loads | Low |
+| **Medium** | Left-Right | Wait-free emission | Medium |
+| **Medium** | Seqlock | Optimistic readers | Medium |
+| **Low** | Flat Combining | Batched connects | High |
+| **Future** | Hazard Pointers | When C++26 available | Defer |
+
+##### 6.8.7 signal_inline Variants (Implemented)
+
+Created `signal-inline.hpp` with three variants:
+
+| Class | Thread Safety | Single Slot | vs signal_base |
+|-------|---------------|-------------|----------------|
+| `signal_inline<T...>` | ❌ None | 4.46 ns | **58% faster** |
+| `signal_inline_rw<T...>` | Read-write lock | 7.70 ns | **28% faster** |
+| `signal_inline_rcu<T...>` | Lock-free RCU | 10.3 ns | ~same |
+
+**Key finding**: `signal_inline_rw` offers best balance of performance and thread safety.
+
 ---
 
 #### References

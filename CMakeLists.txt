@@ -25,6 +25,8 @@ option(SIGSLOT_ENABLE_STDEXEC "Enable std::execution support via NVIDIA stdexec"
 option(SIGSLOT_ENABLE_BENCHMARK "Enable Google Benchmark support" OFF)
 option(SIGSLOT_USE_intrusive-ptr "Use intrusive reference counting instead of shared_ptr (experimental)" OFF)
 option(SIGSLOT_USE_SLOT_VARIANT "Use variant-based slot storage to eliminate virtual dispatch (experimental)" OFF)
+option(SIGSLOT_CACHE_LINE_PADDING "Use cache line padding to reduce false sharing (recommended)" ON)
+option(SIGSLOT_INDEX_CACHING "Use index caching to reduce atomic loads on hot path (recommended)" ON)
 set(SIGSLOT_SLOT_ALLOCATOR "AUTO" CACHE STRING "Slot allocator: AUTO, DEFAULT, PMR, or ARENA")
 set_property(CACHE SIGSLOT_SLOT_ALLOCATOR PROPERTY STRINGS AUTO DEFAULT PMR ARENA)
 
@@ -99,6 +101,8 @@ target_compile_definitions(sigslot INTERFACE
     $<$<NOT:$<EQUAL:${SIGSLOT_USE_SLOT_POOL},0>>:SIGSLOT_USE_SLOT_POOL=${SIGSLOT_USE_SLOT_POOL}>
     $<$<BOOL:${SIGSLOT_USE_intrusive-ptr}>:SIGSLOT_USE_INTRUSIVE_PTR>
     $<$<BOOL:${SIGSLOT_USE_SLOT_VARIANT}>:SIGSLOT_USE_SLOT_VARIANT>
+    $<$<BOOL:${SIGSLOT_CACHE_LINE_PADDING}>:SIGSLOT_CACHE_LINE_PADDING>
+    $<$<BOOL:${SIGSLOT_INDEX_CACHING}>:SIGSLOT_INDEX_CACHING>
 )
 if(SIGSLOT_ENABLE_STDEXEC)
     target_link_libraries(sigslot INTERFACE STDEXEC::stdexec)

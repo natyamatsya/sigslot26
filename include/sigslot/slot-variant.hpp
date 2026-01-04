@@ -206,24 +206,35 @@ public:
     // This is a tunable parameter - can be adjusted based on profiling
     static constexpr std::size_t storage_size = 64;
     static constexpr std::size_t storage_align = alignof(std::max_align_t);
+#ifdef SIGSLOT_CACHE_LINE_PADDING
+    static constexpr std::size_t cache_line_size = 64;
+#endif
 
 private:
     // ========================================================================
-    // Hot data - accessed on every emission (packed into first cache line)
+    // Hot data - accessed on every emission
     // ========================================================================
-    call_fn_t call_ = nullptr;                      // 8 bytes - inline fn ptr
+#ifdef SIGSLOT_CACHE_LINE_PADDING
+    alignas(cache_line_size) call_fn_t call_ = nullptr;  // Cache line aligned
+#else
+    call_fn_t call_ = nullptr;
+#endif
     alignas(storage_align) 
-        std::byte storage_[storage_size] = {};      // 64 bytes - variant storage
-    std::atomic<bool> connected_{false};            // 1 byte
-    std::atomic<bool> blocked_{false};              // 1 byte
-    slot_tag tag_ = slot_tag::empty;                // 1 byte
+        std::byte storage_[storage_size] = {};           // 64 bytes - variant storage
+    std::atomic<bool> connected_{false};                 // 1 byte
+    std::atomic<bool> blocked_{false};                   // 1 byte
+    slot_tag tag_ = slot_tag::empty;                     // 1 byte
     
     // ========================================================================
     // Cold data - accessed on connect/disconnect only
     // ========================================================================
-    destroy_fn_t destroy_ = nullptr;                // 8 bytes
-    std::atomic<std::size_t> index_{0};             // 8 bytes
-    Group group_{};                                 // 4 bytes (typically int32_t)
+#ifdef SIGSLOT_CACHE_LINE_PADDING
+    alignas(cache_line_size) destroy_fn_t destroy_ = nullptr;  // Separate cache line
+#else
+    destroy_fn_t destroy_ = nullptr;
+#endif
+    std::atomic<std::size_t> index_{0};                        // 8 bytes
+    Group group_{};                                            // 4 bytes
     
 public:
     // ========================================================================
