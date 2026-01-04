@@ -55,7 +55,22 @@ These benchmarks establish baselines for optimization phases:
 
 - **Phase 1**: Relaxed memory ordering + cache alignment
 - **Phase 2**: Lock-free emission via RCU pattern
-- **Phase 3**: Small buffer optimization, batch emission
+- **Phase 3**: Small buffer optimization (3-slot SBO)
+- **Phase 4**: Dual-counter intrusive_ptr (lock-free weak references)
+
+## SBO Layout Analysis
+
+Run the `analyze-sbo-layout` tool to see actual type sizes:
+
+```bash
+cmake --build build --target analyze-sbo-layout
+./build/benchmark/analysis/analyze-sbo-layout
+```
+
+With dual-counter intrusive_ptr enabled (`-DSIGSLOT_USE_INTRUSIVE_PTR=ON`):
+- `intrusive_ptr<T>`: 8 bytes (vs 16 bytes for `shared_ptr`)
+- `intrusive_weak_ptr<T>`: 8 bytes (vs 16 bytes for `weak_ptr`)
+- 3-slot SBO fits in 64-byte cache line: **40 bytes total**
 
 ## Interpreting Results
 

@@ -30,7 +30,7 @@ if(SIGSLOT_ENABLE_SBO_ANALYSIS)
             ${nlohmann_json_single_SOURCE_DIR}/single_include)
     endif()
 
-    target_link_libraries(analyze-sbo-layout PRIVATE nlohmann_json)
+    target_link_libraries(analyze-sbo-layout PRIVATE nlohmann_json Pal::Sigslot)
     target_compile_definitions(analyze-sbo-layout PRIVATE HAS_NLOHMANN_JSON)
     
     # Add to parent target if available

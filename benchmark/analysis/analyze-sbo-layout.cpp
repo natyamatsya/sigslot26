@@ -4,6 +4,11 @@
 #include <array>
 #include <functional>
 #include <memory>
+#include <atomic>
+
+// Include actual signal types to get real sizes
+#include <sigslot/signal.hpp>
+#include <sigslot/intrusive_ptr.hpp>
 
 // Try to include nlohmann/json, fallback to simple output if not available
 #ifdef HAS_NLOHMANN_JSON
@@ -14,7 +19,7 @@ using json = nlohmann::json;
 #define USE_JSON 0
 #endif
 
-// Simulate slot types
+// Simulate slot types for comparison
 struct FreeFunctionSlot {
     void (*func)(int);
 };
@@ -37,19 +42,32 @@ int main() {
 #if USE_JSON
     json analysis;
     
-    // Type sizes
+    // Standard library type sizes
     analysis["type_sizes"]["std_vector_int"] = sizeof(std::vector<int>);
     analysis["type_sizes"]["std_array_int_3"] = sizeof(std::array<int,3>);
     analysis["type_sizes"]["std_function_void_int"] = sizeof(std::function<void(int)>);
     analysis["type_sizes"]["std_shared_ptr_int"] = sizeof(std::shared_ptr<int>);
+    analysis["type_sizes"]["std_weak_ptr_int"] = sizeof(std::weak_ptr<int>);
+    analysis["type_sizes"]["std_atomic_size_t"] = sizeof(std::atomic<size_t>);
     analysis["type_sizes"]["free_function_slot"] = sizeof(FreeFunctionSlot);
     analysis["type_sizes"]["member_function_slot"] = sizeof(MemberFunctionSlot);
     analysis["type_sizes"]["lambda_slot"] = sizeof(LambdaSlot);
     analysis["type_sizes"]["function_slot"] = sizeof(FunctionSlot);
     
+    // Sigslot pointer types
+    analysis["sigslot_types"]["slot_strong_ptr"] = sizeof(sigslot::slot_strong_ptr<sigslot::detail::slot_state>);
+    analysis["sigslot_types"]["slot_weak_ptr"] = sizeof(sigslot::slot_weak_ptr<sigslot::detail::slot_state>);
+#ifdef SIGSLOT_USE_INTRUSIVE_PTR
+    analysis["sigslot_types"]["mode"] = "dual-counter intrusive_ptr";
+    analysis["sigslot_types"]["intrusive_refcount"] = sizeof(sigslot::detail::intrusive_refcount);
+    analysis["sigslot_types"]["intrusive_ptr"] = sizeof(sigslot::detail::intrusive_ptr<sigslot::detail::intrusive_refcount>);
+    analysis["sigslot_types"]["intrusive_weak_ptr"] = sizeof(sigslot::detail::intrusive_weak_ptr<sigslot::detail::intrusive_refcount>);
+#else
+    analysis["sigslot_types"]["mode"] = "std::shared_ptr";
+#endif
+    
     // SBO container components
-    analysis["sbo_components"]["bool_using_heap"] = sizeof(bool);
-    analysis["sbo_components"]["size_t_size"] = sizeof(size_t);
+    analysis["sbo_components"]["size_and_flag"] = sizeof(size_t);
     analysis["sbo_components"]["overhead_bytes"] = 16; // rounded for alignment
     
     // Optimal SBO sizes analysis
@@ -114,58 +132,73 @@ int main() {
     auto print_text_output = []() {
         std::cout << "=== SBO Binary Layout Analysis ===\n\n";
         
-        std::cout << "Type Sizes:\n";
+        std::cout << "Standard Library Type Sizes:\n";
         std::cout << "  std::vector<int>: " << sizeof(std::vector<int>) << " bytes\n";
         std::cout << "  std::array<int,3>: " << sizeof(std::array<int,3>) << " bytes\n";
         std::cout << "  std::function<void(int)>: " << sizeof(std::function<void(int)>) << " bytes\n";
         std::cout << "  std::shared_ptr<int>: " << sizeof(std::shared_ptr<int>) << " bytes\n";
+        std::cout << "  std::weak_ptr<int>: " << sizeof(std::weak_ptr<int>) << " bytes\n";
+        std::cout << "  std::atomic<size_t>: " << sizeof(std::atomic<size_t>) << " bytes\n";
+        
+#ifdef SIGSLOT_USE_INTRUSIVE_PTR
+        std::cout << "\n=== Dual-Counter Intrusive Ptr Mode (SIGSLOT_USE_INTRUSIVE_PTR=ON) ===\n\n";
+        
+        std::cout << "Intrusive Reference Counting Sizes:\n";
+        std::cout << "  intrusive_refcount: " << sizeof(sigslot::detail::intrusive_refcount) << " bytes\n";
+        std::cout << "    - m_strong (atomic<size_t>): " << sizeof(std::atomic<size_t>) << " bytes\n";
+        std::cout << "    - m_weak (atomic<size_t>): " << sizeof(std::atomic<size_t>) << " bytes\n";
+        std::cout << "    - m_arena_allocated (bool): " << sizeof(bool) << " byte\n";
+        std::cout << "  intrusive_ptr<T>: " << sizeof(sigslot::detail::intrusive_ptr<sigslot::detail::intrusive_refcount>) << " bytes\n";
+        std::cout << "  intrusive_weak_ptr<T>: " << sizeof(sigslot::detail::intrusive_weak_ptr<sigslot::detail::intrusive_refcount>) << " bytes\n";
+        
+        std::cout << "\nDual-Counter Benefits:\n";
+        std::cout << "  - No std::weak_ptr anchor needed (saves 16 bytes per slot)\n";
+        std::cout << "  - Lock-free weak_ptr::lock() via CAS\n";
+        std::cout << "  - Single allocation (no control block)\n";
+#else
+        std::cout << "\n=== Standard shared_ptr Mode (SIGSLOT_USE_INTRUSIVE_PTR=OFF) ===\n\n";
+        
+        std::cout << "shared_ptr Overhead:\n";
+        std::cout << "  std::shared_ptr<T>: " << sizeof(std::shared_ptr<int>) << " bytes\n";
+        std::cout << "  std::weak_ptr<T>: " << sizeof(std::weak_ptr<int>) << " bytes\n";
+        std::cout << "  Control block: ~32 bytes (separate allocation)\n";
+#endif
+        
+        std::cout << "\nSlot Pointer Sizes:\n";
+        std::cout << "  slot_strong_ptr: " << sizeof(sigslot::slot_strong_ptr<sigslot::detail::slot_state>) << " bytes\n";
+        std::cout << "  slot_weak_ptr: " << sizeof(sigslot::slot_weak_ptr<sigslot::detail::slot_state>) << " bytes\n";
+        
+        std::cout << "\nSimulated Slot Type Sizes:\n";
         std::cout << "  FreeFunctionSlot: " << sizeof(FreeFunctionSlot) << " bytes\n";
         std::cout << "  MemberFunctionSlot: " << sizeof(MemberFunctionSlot) << " bytes\n";
         std::cout << "  LambdaSlot: " << sizeof(LambdaSlot) << " bytes\n";
         std::cout << "  FunctionSlot: " << sizeof(FunctionSlot) << " bytes\n";
         
         std::cout << "\nSBO Container Components:\n";
-        std::cout << "  bool using_heap_: " << sizeof(bool) << " byte\n";
-        std::cout << "  size_t size_: " << sizeof(size_t) << " bytes\n";
+        std::cout << "  size_and_flag_: " << sizeof(size_t) << " bytes (high bit = heap flag)\n";
         std::cout << "  Total overhead: 16 bytes (rounded for alignment)\n";
         
-        std::cout << "\nOptimal SBO Sizes Analysis:\n";
-        std::cout << "  Free Function Slot Size: " << sizeof(FreeFunctionSlot) << " bytes\n";
-        std::cout << "  Member Function Slot Size: " << sizeof(MemberFunctionSlot) << " bytes\n";
-        std::cout << "  Function Slot Size: " << sizeof(FunctionSlot) << " bytes\n";
-        
-        std::cout << "\nFree Functions (" << sizeof(FreeFunctionSlot) << " bytes each):\n";
-        for (int i = 1; i <= 4; ++i) {
-            std::cout << "  " << i << " slots: " << i * sizeof(FreeFunctionSlot) + 16 << " bytes\n";
-        }
-        
-        std::cout << "\nMember Functions (" << sizeof(MemberFunctionSlot) << " bytes each):\n";
-        for (int i = 1; i <= 3; ++i) {
-            std::cout << "  " << i << " slots: " << i * sizeof(MemberFunctionSlot) + 16 << " bytes\n";
-        }
-        
-        std::cout << "\nstd::function (" << sizeof(FunctionSlot) << " bytes each):\n";
-        for (int i = 1; i <= 2; ++i) {
-            std::cout << "  " << i << " slots: " << i * sizeof(FunctionSlot) + 16 << " bytes\n";
-        }
-        
-        std::cout << "\nCache Line Analysis:\n";
-        std::cout << "  Typical cache line: 64 bytes\n";
-        std::cout << "  3 free function slots: " << 3 * sizeof(FreeFunctionSlot) + 16 << " bytes\n";
-        std::cout << "  2 member function slots: " << 2 * sizeof(MemberFunctionSlot) + 16 << " bytes\n";
-        std::cout << "  1 function slot: " << 1 * sizeof(FunctionSlot) + 16 << " bytes\n";
+        std::cout << "\nCache Line Analysis (64 bytes):\n";
+        std::cout << "  3 slot_strong_ptr: " << 3 * sizeof(sigslot::slot_strong_ptr<sigslot::detail::slot_state>) << " bytes\n";
+        std::cout << "  + SBO overhead: 16 bytes\n";
+        std::cout << "  = Total for 3-slot SBO: " << 3 * sizeof(sigslot::slot_strong_ptr<sigslot::detail::slot_state>) + 16 << " bytes\n";
+#ifdef SIGSLOT_USE_INTRUSIVE_PTR
+        std::cout << "  Fits in cache line: " << (3 * sizeof(sigslot::slot_strong_ptr<sigslot::detail::slot_state>) + 16 <= 64 ? "YES" : "NO") << "\n";
+#endif
         
         std::cout << "\nMemory Efficiency:\n";
         std::cout << "  Heap allocation overhead: 24-32 bytes\n";
         std::cout << "  SBO saves heap allocation for first N slots\n";
         
         std::cout << "\nRecommendation:\n";
-        std::cout << "  Optimal size: 3\n";
+        std::cout << "  Optimal SBO size: 3 slots\n";
         std::cout << "  Reasons:\n";
         std::cout << "    - Fits well within cache line boundaries\n";
         std::cout << "    - Covers common use cases (1-3 slots)\n";
         std::cout << "    - Avoids heap allocation for most cases\n";
-        std::cout << "    - Good balance between stack usage and coverage\n";
+#ifdef SIGSLOT_USE_INTRUSIVE_PTR
+        std::cout << "    - Dual-counter intrusive_ptr fits perfectly\n";
+#endif
     };
 
     print_text_output();
