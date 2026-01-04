@@ -15,6 +15,8 @@
 #include <optional>
 #include <concepts>
 
+#include "signal_sbo.hpp"
+
 // Cache line size for preventing false sharing between threads.
 // When multiple threads access adjacent memory locations, they may experience
 // "false sharing" - cache invalidation even though they access different variables.
@@ -1244,10 +1246,16 @@ private:
     using lock_type = std::unique_lock<Lockable>;
     using slot_base = detail::slot_base<group_id, T...>;
     using slot_ptr = detail::slot_ptr<Group, T...>;
-    using slots_type = std::vector<slot_ptr>;
+    using slots_type = detail::sbo_container<slot_ptr, 3>; // SBO for up to 3 slots
     struct group_type {
         slots_type slts;
         group_id gid;
+        
+        // SBO-specific optimizations
+        constexpr bool is_using_heap() const noexcept { return slts.is_using_heap(); }
+        constexpr std::size_t heap_threshold() const noexcept { return 3; }
+        constexpr std::span<slot_ptr> get_slots_span() noexcept { return slts.get_span(); }
+        constexpr std::span<const slot_ptr> get_slots_span() const noexcept { return slts.get_span(); }
     };
     using list_type = std::vector<group_type>; // kept ordered by ascending gid
 
@@ -1302,8 +1310,17 @@ public:
         cow_copy_type<list_type> ref = std::forward<Self>(self).slots_reference();
 
         for (const auto& group : detail::cow_read(ref)) {
-            for (const auto& s : group.slts) {
-                s->operator()(std::forward<U>(a)...);
+            // SBO-optimized iteration: use span for better cache locality
+            if (!group.is_using_heap()) {
+                // Fast path: stack storage, use span for optimal iteration
+                for (const auto& s : group.get_slots_span()) {
+                    s->operator()(std::forward<U>(a)...);
+                }
+            } else {
+                // Fallback: heap storage, use standard iteration
+                for (const auto& s : group.slts) {
+                    s->operator()(std::forward<U>(a)...);
+                }
             }
         }
     }
@@ -1632,6 +1649,18 @@ public:
         }
         return count;
     }
+    
+    // Public SBO interface for performance monitoring
+    template<typename Self>
+    auto get_sbo_stats(this Self&& self) noexcept {
+        return self.get_sbo_stats();
+    }
+    
+    template<typename Self>
+    bool is_using_sbo_efficiently(this Self&& self) noexcept {
+        auto stats = self.get_sbo_stats();
+        return stats.stack_efficiency >= 75.0; // 75%+ slots should use SBO
+    }
 
     /**
      * @brief Check if a callable is connected
@@ -1752,7 +1781,16 @@ private:
 
         // add the slot
         s->index() = it->slts.size();
-        it->slts.push_back(std::move(s));
+        
+        // SBO-aware slot addition with optimization hint
+        if (!it->is_using_heap() && it->slts.size() < it->heap_threshold() - 1) {
+            // Fast path: still within SBO capacity, this will be stack allocation
+            it->slts.push_back(std::move(s));
+        } else {
+            // Transition path: about to exceed SBO capacity or already on heap
+            it->slts.push_back(std::move(s));
+            // Could add metrics here to track SBO effectiveness
+        }
     }
 
     // count slots matching a condition (non-destructive)
@@ -1766,6 +1804,42 @@ private:
                     ++count;
         }
         return count;
+    }
+    
+    // SBO-specific statistics for performance monitoring
+    struct sbo_stats {
+        size_t total_groups = 0;
+        size_t stack_groups = 0;
+        size_t heap_groups = 0;
+        size_t total_slots = 0;
+        size_t stack_slots = 0;
+        size_t heap_slots = 0;
+        double stack_efficiency = 0.0; // percentage of slots using SBO
+    };
+    
+    template<typename Self>
+    sbo_stats get_sbo_stats(this Self&& self) noexcept {
+        cow_copy_type<list_type> ref = std::forward<Self>(self).slots_reference();
+        sbo_stats stats{};
+        
+        for (const auto& group : detail::cow_read(ref)) {
+            ++stats.total_groups;
+            stats.total_slots += group.slts.size();
+            
+            if (group.is_using_heap()) {
+                ++stats.heap_groups;
+                stats.heap_slots += group.slts.size();
+            } else {
+                ++stats.stack_groups;
+                stats.stack_slots += group.slts.size();
+            }
+        }
+        
+        if (stats.total_slots > 0) {
+            stats.stack_efficiency = (double(stats.stack_slots) / stats.total_slots) * 100.0;
+        }
+        
+        return stats;
     }
 
     // disconnect a slot if a condition occurs
