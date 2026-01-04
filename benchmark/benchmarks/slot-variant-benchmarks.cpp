@@ -283,6 +283,50 @@ static void BM_SignalInline_PMF(benchmark::State& state) {
 }
 
 // ============================================================================
+// Thread-safe signal_inline benchmarks
+// ============================================================================
+
+static void BM_SignalInlineRW_SingleSlot(benchmark::State& state) {
+    sigslot::signal_inline_rw<int> sig;
+    sig.connect([](int x) { benchmark::DoNotOptimize(x); });
+    
+    for (auto _ : state) {
+        sig(42);
+    }
+}
+
+static void BM_SignalInlineRW_10Slots(benchmark::State& state) {
+    sigslot::signal_inline_rw<int> sig;
+    for (int i = 0; i < 10; ++i) {
+        sig.connect([](int x) { benchmark::DoNotOptimize(x); });
+    }
+    
+    for (auto _ : state) {
+        sig(42);
+    }
+}
+
+static void BM_SignalInlineRCU_SingleSlot(benchmark::State& state) {
+    sigslot::signal_inline_rcu<int> sig;
+    sig.connect([](int x) { benchmark::DoNotOptimize(x); });
+    
+    for (auto _ : state) {
+        sig(42);
+    }
+}
+
+static void BM_SignalInlineRCU_10Slots(benchmark::State& state) {
+    sigslot::signal_inline_rcu<int> sig;
+    for (int i = 0; i < 10; ++i) {
+        sig.connect([](int x) { benchmark::DoNotOptimize(x); });
+    }
+    
+    for (auto _ : state) {
+        sig(42);
+    }
+}
+
+// ============================================================================
 // Register benchmarks
 // ============================================================================
 
@@ -313,6 +357,12 @@ BENCHMARK(BM_SignalInline_PMF);
 // Tracked benchmarks
 BENCHMARK(BM_VirtualDispatch_Tracked);
 BENCHMARK(BM_SlotVariant_Tracked);
+
+// Thread-safe variants
+BENCHMARK(BM_SignalInlineRW_SingleSlot);
+BENCHMARK(BM_SignalInlineRW_10Slots);
+BENCHMARK(BM_SignalInlineRCU_SingleSlot);
+BENCHMARK(BM_SignalInlineRCU_10Slots);
 
 // Size analysis
 BENCHMARK(BM_SlotVariant_SizeOf);
