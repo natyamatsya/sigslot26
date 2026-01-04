@@ -186,10 +186,22 @@ public:
         requires std::is_base_of_v<T, U>
     intrusive_weak_ptr(const intrusive_ptr<U>& strong) noexcept : ptr_(strong.get()) {}
     
+    // Copy operations
     intrusive_weak_ptr(const intrusive_weak_ptr& other) noexcept : ptr_(other.ptr_) {}
     
     intrusive_weak_ptr& operator=(const intrusive_weak_ptr& other) noexcept {
         ptr_ = other.ptr_;
+        return *this;
+    }
+    
+    // Move operations - critical for vector reallocation!
+    intrusive_weak_ptr(intrusive_weak_ptr&& other) noexcept : ptr_(other.ptr_) {
+        other.ptr_ = nullptr;
+    }
+    
+    intrusive_weak_ptr& operator=(intrusive_weak_ptr&& other) noexcept {
+        ptr_ = other.ptr_;
+        other.ptr_ = nullptr;
         return *this;
     }
     
