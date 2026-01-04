@@ -41,7 +41,7 @@ macro(pal_create_test target ut)
     
     # Discover Catch2 tests with timeout and repetition for threading tests
     # TSan on macOS significantly slows down execution (up to 10x slower)
-    if(target MATCHES "async|threaded")
+    if(target MATCHES "async|threaded|signal-inline")
         # Pass repeat count and pool size as compile definitions
         target_compile_definitions(${target} PRIVATE 
             SIGSLOT_TEST_REPEAT=${SIGSLOT_ASYNC_TEST_REPEAT}
