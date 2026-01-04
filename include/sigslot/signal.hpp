@@ -1476,7 +1476,7 @@ public:
      *   {
      *       auto batch = sig.batch();
      *       for (int i = 0; i < 1000; ++i) {
-     *           batch.emit(i);  // Uses cached snapshot
+     *           batch(i);  // Uses cached snapshot via operator()
      *       }
      *   }
      * @endcode
@@ -1496,9 +1496,11 @@ public:
         
         /**
          * @brief Emit a value using the cached snapshot
+         * 
+         * Note: Named 'batch_emit' instead of 'emit' to avoid conflict with Qt's emit macro.
          */
         template<typename... U>
-        void emit(U&&... a) const {
+        void batch_emit(U&&... a) const {
             if (m_block->load(std::memory_order_relaxed)) {
                 return;
             }
@@ -1517,11 +1519,11 @@ public:
         }
         
         /**
-         * @brief Emit a value (operator() alias for emit())
+         * @brief Emit a value (operator() alias for batch_emit())
          */
         template<typename... U>
         void operator()(U&&... a) const {
-            emit(std::forward<U>(a)...);
+            batch_emit(std::forward<U>(a)...);
         }
     };
     

@@ -194,7 +194,7 @@ public:
                 price_ = std::max(0.01, price_ * (1.0 + change / 100.0));
 
                 Tick tick{symbol_, price_, std::chrono::steady_clock::now(), ++sequence_};
-                batch.emit(tick);
+                batch.batch_emit(tick);
             }
             // Brief yield to allow other threads
             std::this_thread::yield();

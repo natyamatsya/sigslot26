@@ -712,11 +712,11 @@ TEST_CASE("Batch emission", "[signal][batch]") {
     sigslot::signal<int> sig;
     sig.connect([](int i) { sum += i; });
     
-    SECTION("batch emit multiple values") {
+    SECTION("batch_emit multiple values") {
         {
             auto batch = sig.batch();
             for (int i = 1; i <= 10; ++i) {
-                batch.emit(i);
+                batch.batch_emit(i);
             }
         }
         REQUIRE(sum == 55);  // 1+2+...+10 = 55
@@ -736,14 +736,14 @@ TEST_CASE("Batch emission", "[signal][batch]") {
         sig.block();
         {
             auto batch = sig.batch();
-            batch.emit(100);
+            batch.batch_emit(100);
         }
         REQUIRE(sum == 0);
         
         sig.unblock();
         {
             auto batch = sig.batch();
-            batch.emit(42);
+            batch.batch_emit(42);
         }
         REQUIRE(sum == 42);
     }
@@ -753,7 +753,7 @@ TEST_CASE("Batch emission", "[signal][batch]") {
         auto batch = sig.batch();
         sig.connect([](int i) { sum += i * 2; });  // Added after batch
         
-        batch.emit(10);
+        batch.batch_emit(10);
         REQUIRE(sum == 10);  // Only original slot called, not the new one
     }
 }
