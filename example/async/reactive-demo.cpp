@@ -306,9 +306,10 @@ public:
 
                 prev_price1_ = latest_price1_;
                 prev_price2_ = latest_price2_;
-            } else if (prev_price1_ == 0) {
+            } else if (!has_first_sample_) {
                 prev_price1_ = latest_price1_;
                 prev_price2_ = latest_price2_;
+                has_first_sample_ = true;
             }
             updates_++;
         });
@@ -340,6 +341,7 @@ private:
     double latest_price2_ = 0.0;
     double prev_price1_ = 0.0;
     double prev_price2_ = 0.0;
+    bool has_first_sample_ = false;
     std::string sym1_, sym2_;
 };
 

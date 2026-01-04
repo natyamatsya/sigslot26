@@ -300,7 +300,7 @@ private:
                         while (true) {
                             std::this_thread::sleep_for(d);
 
-                            std::lock_guard lock(s->mtx);
+                            std::lock_guard inner_lock(s->mtx);
                             if (s->stopped) {
                                 s->thread_running = false;
                                 return;

@@ -569,8 +569,8 @@ TEST_CASE("ArenaTestObject multiple arena allocations", "[.][arena][intrusive_pt
         REQUIRE(ArenaTestObject::destructed == 0);
         
         // Verify all values
-        for (int i = 0; i < 100; ++i) {
-            REQUIRE(ptrs[i]->value == i);
+        for (std::size_t i = 0; i < 100; ++i) {
+            REQUIRE(ptrs[i]->value == static_cast<int>(i));
         }
     }
     
@@ -619,8 +619,8 @@ TEST_CASE("ArenaTestObject arena reset reuse", "[.][arena][intrusive_ptr]") {
         }
         
         // Verify new values
-        for (int i = 0; i < 50; ++i) {
-            REQUIRE(ptrs[i]->value == i + 100);
+        for (std::size_t i = 0; i < 50; ++i) {
+            REQUIRE(ptrs[i]->value == static_cast<int>(i) + 100);
         }
     }
     

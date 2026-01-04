@@ -761,7 +761,7 @@ public:
         , m_connected(true)
         , m_blocked(false) {}
 
-    virtual ~slot_state() = default;
+    ~slot_state() override = default;
     
     // Initialize the weak pointer anchor (called after construction)
     void init_weak_anchor() {
