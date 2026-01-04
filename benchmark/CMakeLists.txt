@@ -37,4 +37,7 @@ if(SIGSLOT_ENABLE_BENCHMARK)
     
     # Add benchmark targets
     add_subdirectory(benchmarks)
+    
+    # Add SBO analysis tool
+    add_subdirectory(analysis)
 endif()
