@@ -421,17 +421,21 @@ public:
     
     template<typename... Args>
     bool emplace_back(Args&&... args) {
-        if (size_ >= Capacity) return false;
-        new (data() + size_) T(std::forward<Args>(args)...);
-        ++size_;
+        const std::size_t current = size_.load(std::memory_order_relaxed);
+        if (current >= Capacity) return false;
+        // Construct object first
+        new (data() + current) T(std::forward<Args>(args)...);
+        // Then publish size with release semantics so readers see constructed object
+        size_.store(current + 1, std::memory_order_release);
         return true;
     }
     
     void clear() {
-        for (std::size_t i = 0; i < size_; ++i) {
+        const std::size_t current = size_.load(std::memory_order_relaxed);
+        for (std::size_t i = 0; i < current; ++i) {
             std::launder(data() + i)->~T();
         }
-        size_ = 0;
+        size_.store(0, std::memory_order_release);
     }
     
     [[nodiscard]] T& operator[](std::size_t i) noexcept {
@@ -450,14 +454,20 @@ public:
         return reinterpret_cast<const T*>(storage_);
     }
     
-    [[nodiscard]] std::size_t size() const noexcept { return size_; }
-    [[nodiscard]] bool empty() const noexcept { return size_ == 0; }
-    [[nodiscard]] bool full() const noexcept { return size_ >= Capacity; }
+    [[nodiscard]] std::size_t size() const noexcept { 
+        return size_.load(std::memory_order_acquire); 
+    }
+    [[nodiscard]] bool empty() const noexcept { 
+        return size_.load(std::memory_order_acquire) == 0; 
+    }
+    [[nodiscard]] bool full() const noexcept { 
+        return size_.load(std::memory_order_acquire) >= Capacity; 
+    }
     [[nodiscard]] static constexpr std::size_t capacity() noexcept { return Capacity; }
     
 private:
     alignas(T) std::byte storage_[Capacity * sizeof(T)]{};
-    std::size_t size_ = 0;
+    std::atomic<std::size_t> size_{0};
 };
 
 } // namespace detail
