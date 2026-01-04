@@ -770,24 +770,6 @@ public:
 #else
     virtual ~slot_state() = default;
 #endif
-    
-    // Initialize the weak pointer anchor (called after construction)
-    void init_weak_anchor() {
-#ifdef SIGSLOT_USE_INTRUSIVE_PTR
-        // Create a shared_ptr with null deleter - it won't delete the object
-        // This provides a stable anchor for weak_ptrs
-        m_weak_anchor = std::shared_ptr<slot_state>(this, [](slot_state*){});
-#endif
-    }
-    
-    // Get a weak_ptr for connection objects
-    [[nodiscard]] std::weak_ptr<slot_state> get_weak_ptr() const noexcept {
-#ifdef SIGSLOT_USE_INTRUSIVE_PTR
-        return m_weak_anchor;
-#else
-        return const_cast<slot_state*>(this)->weak_from_this();
-#endif
-    }
 
     // memory_order_relaxed is safe here: we only need eventual consistency for
     // the connected flag. No synchronization with other memory operations required.
@@ -825,9 +807,6 @@ private:
     std::size_t m_index; // index into the array of slot pointers inside the signal
     std::atomic<bool> m_connected;
     std::atomic<bool> m_blocked;
-#ifdef SIGSLOT_USE_INTRUSIVE_PTR
-    std::shared_ptr<slot_state> m_weak_anchor;  // Anchor for weak_ptr support
-#endif
 };
 
 template<typename Group>
@@ -847,17 +826,23 @@ private:
 } // namespace detail
 
 // Type aliases for pointer types based on configuration
-// slot_weak_ptr ALWAYS uses std::weak_ptr for safe weak reference semantics
-// slot_strong_ptr uses intrusive_ptr when enabled for SBO performance
 #ifdef SIGSLOT_USE_INTRUSIVE_PTR
+// With dual-counter intrusive_ptr, we use intrusive_weak_ptr for weak references
+// This eliminates the need for std::weak_ptr anchor and provides lock-free lock()
 template<typename T>
-using slot_weak_ptr = std::weak_ptr<T>;  // Always use std::weak_ptr for safety
+using slot_weak_ptr = detail::intrusive_weak_ptr<T>;
 template<typename T>
 using slot_strong_ptr = detail::intrusive_ptr<T>;
 
 template<typename T, typename U>
 inline slot_strong_ptr<T> slot_pointer_cast(const slot_strong_ptr<U>& ptr) {
     return detail::static_pointer_cast<T>(ptr);
+}
+
+// Helper to get a weak_ptr from a slot for connection objects
+template<typename T>
+inline slot_weak_ptr<detail::slot_state> get_slot_weak_ptr(const slot_strong_ptr<T>& ptr) {
+    return slot_weak_ptr<detail::slot_state>(detail::static_pointer_cast<detail::slot_state>(ptr));
 }
 #else
 template<typename T>
@@ -869,13 +854,13 @@ template<typename T, typename U>
 inline slot_strong_ptr<T> slot_pointer_cast(const slot_strong_ptr<U>& ptr) {
     return std::static_pointer_cast<T>(ptr);
 }
-#endif
 
 // Helper to get a weak_ptr from a slot for connection objects
 template<typename T>
-inline std::weak_ptr<detail::slot_state> get_slot_weak_ptr(const slot_strong_ptr<T>& ptr) {
-    return ptr->get_weak_ptr();
+inline slot_weak_ptr<detail::slot_state> get_slot_weak_ptr(const slot_strong_ptr<T>& ptr) {
+    return ptr;
 }
+#endif
 
 /**
  * @brief connection_blocker is a RAII object that blocks a connection until destruction
@@ -1883,9 +1868,7 @@ private:
     // create a new slot
     template<typename Slot, typename... A>
     inline auto make_slot(A&&... a) {
-        auto s = detail::make_slot_ptr<slot_base, Slot>(*this, std::forward<A>(a)...);
-        s->init_weak_anchor();  // Initialize weak pointer support
-        return s;
+        return detail::make_slot_ptr<slot_base, Slot>(*this, std::forward<A>(a)...);
     }
 
     // add the slot to the list of slots of the right group

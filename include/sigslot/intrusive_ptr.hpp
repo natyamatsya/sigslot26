@@ -9,42 +9,56 @@
 namespace sigslot::detail {
 
 /**
- * @brief Base class for intrusive reference counting
+ * @brief Base class for dual-counter intrusive reference counting
  * 
  * Objects that inherit from this class can be managed by intrusive_ptr.
- * The reference count is embedded in the object itself, eliminating the
- * need for a separate control block (unlike std::shared_ptr).
+ * Uses dual counters (strong + weak) embedded in the object itself,
+ * eliminating the need for a separate control block (unlike std::shared_ptr).
+ * 
+ * Memory layout (16 bytes for counters):
+ * - m_strong: strong reference count (controls object lifetime)
+ * - m_weak: weak reference count + 1 while strong > 0
  * 
  * Benefits:
- * - Single allocation (object + refcount together)
+ * - Single allocation (object + refcounts together)
  * - Smaller memory footprint (no control block)
- * - Faster copy operations (one atomic op instead of two)
+ * - Lock-free weak_ptr::lock() via CAS
+ * - Cache-friendly (counters adjacent in memory)
  * - Arena-friendly (no cross-thread deallocation issues)
  */
 class intrusive_refcount {
-    mutable std::atomic<std::size_t> m_refcount{0};
+    mutable std::atomic<std::size_t> m_strong{0};
+    mutable std::atomic<std::size_t> m_weak{1};  // +1 for strong refs existing
     bool m_arena_allocated = false;
     
 protected:
     intrusive_refcount() noexcept = default;
     // NOLINTNEXTLINE(hicpp-named-parameter,readability-named-parameter)
-    intrusive_refcount(const intrusive_refcount& /*unused*/) noexcept : m_refcount(0), m_arena_allocated(false) {}
+    intrusive_refcount(const intrusive_refcount& /*unused*/) noexcept : m_strong(0), m_weak(1), m_arena_allocated(false) {}
     // NOLINTNEXTLINE(cert-oop54-cpp) - intentionally ignores source, refcount is not copied
     intrusive_refcount& operator=(const intrusive_refcount& /*unused*/) noexcept { return *this; }
     
     /**
-     * @brief Override to customize destruction behavior
+     * @brief Called when strong count reaches zero
      * 
-     * Default implementation checks m_arena_allocated flag.
-     * Derived classes can override for custom arena handling.
+     * Calls the destructor but does NOT free memory.
+     * Memory is freed later by destroy_weak() when weak count reaches zero.
      */
     virtual void destroy() const {
-        if (m_arena_allocated) {
-            // Arena allocation: call destructor but don't free memory
-            this->~intrusive_refcount();
-        } else {
-            // Heap allocation: normal delete
-            delete this;
+        // Call destructor only - memory stays valid for weak refs
+        this->~intrusive_refcount();
+    }
+    
+    /**
+     * @brief Called when weak count reaches zero
+     * 
+     * At this point, the object is already destroyed (strong == 0),
+     * and no weak references remain. Safe to deallocate memory.
+     */
+    virtual void destroy_weak() const {
+        if (!m_arena_allocated) {
+            // Free memory (destructor already called in destroy())
+            ::operator delete(const_cast<intrusive_refcount*>(this));
         }
     }
     
@@ -52,17 +66,56 @@ public:
     virtual ~intrusive_refcount() = default;
     
     void add_ref() const noexcept {
-        m_refcount.fetch_add(1, std::memory_order_relaxed);
+        m_strong.fetch_add(1, std::memory_order_relaxed);
     }
     
     void release_ref() const noexcept {
-        if (m_refcount.fetch_sub(1, std::memory_order_acq_rel) == 1) {
+        if (m_strong.fetch_sub(1, std::memory_order_acq_rel) == 1) {
+            // Last strong reference gone - destroy object
             destroy();
+            // Release the weak count held by strong references
+            release_weak_ref();
         }
     }
     
+    void add_weak_ref() const noexcept {
+        m_weak.fetch_add(1, std::memory_order_relaxed);
+    }
+    
+    void release_weak_ref() const noexcept {
+        if (m_weak.fetch_sub(1, std::memory_order_acq_rel) == 1) {
+            // Last weak reference gone - deallocate memory
+            destroy_weak();
+        }
+    }
+    
+    /**
+     * @brief Atomically try to acquire a strong reference if object is alive
+     * @return true if strong ref acquired, false if object already destroyed
+     * 
+     * This is the lock-free CAS loop used by intrusive_weak_ptr::lock().
+     */
+    [[nodiscard]] bool try_add_ref() const noexcept {
+        std::size_t count = m_strong.load(std::memory_order_relaxed);
+        while (count != 0) {
+            if (m_strong.compare_exchange_weak(count, count + 1,
+                    std::memory_order_acq_rel, std::memory_order_relaxed)) {
+                return true;
+            }
+            // count is updated by compare_exchange_weak on failure
+        }
+        return false;
+    }
+    
     [[nodiscard]] std::size_t use_count() const noexcept {
-        return m_refcount.load(std::memory_order_relaxed);
+        return m_strong.load(std::memory_order_relaxed);
+    }
+    
+    [[nodiscard]] std::size_t weak_count() const noexcept {
+        // Subtract 1 because we always hold +1 while strong > 0
+        std::size_t w = m_weak.load(std::memory_order_relaxed);
+        std::size_t s = m_strong.load(std::memory_order_relaxed);
+        return s > 0 ? w - 1 : w;
     }
     
     // Mark as arena-allocated (used by default destroy() implementation)
@@ -186,47 +239,80 @@ public:
 };
 
 /**
- * @brief Weak reference for intrusive_ptr
+ * @brief Weak reference for intrusive_ptr with dual-counter support
  * 
- * Provides a non-owning reference that can detect if the object is still alive.
- * Unlike std::weak_ptr, this doesn't prevent deallocation - it just checks
- * if the refcount is > 0.
+ * Provides a non-owning reference that can safely detect if the object
+ * is still alive and atomically acquire a strong reference.
+ * 
+ * Unlike the previous implementation, this properly prevents use-after-free
+ * by holding a weak reference count that keeps the counters valid.
  */
 template<typename T>
 class intrusive_weak_ptr {
     T* ptr_ = nullptr;
     
+    void add_weak() noexcept {
+        if (ptr_) {
+            ptr_->add_weak_ref();
+        }
+    }
+    
+    void release_weak() noexcept {
+        if (ptr_) {
+            ptr_->release_weak_ref();
+        }
+    }
+    
 public:
     constexpr intrusive_weak_ptr() noexcept = default;
     
-    intrusive_weak_ptr(const intrusive_ptr<T>& strong) noexcept : ptr_(strong.get()) {}
+    intrusive_weak_ptr(const intrusive_ptr<T>& strong) noexcept : ptr_(strong.get()) {
+        add_weak();
+    }
     
     // Allow construction from derived types
     template<typename U>
         requires std::is_base_of_v<T, U>
-    intrusive_weak_ptr(const intrusive_ptr<U>& strong) noexcept : ptr_(strong.get()) {}
+    intrusive_weak_ptr(const intrusive_ptr<U>& strong) noexcept : ptr_(strong.get()) {
+        add_weak();
+    }
     
-    // Copy operations
-    intrusive_weak_ptr(const intrusive_weak_ptr& other) noexcept : ptr_(other.ptr_) {}
+    // Copy operations - must manage weak count
+    intrusive_weak_ptr(const intrusive_weak_ptr& other) noexcept : ptr_(other.ptr_) {
+        add_weak();
+    }
     
     intrusive_weak_ptr& operator=(const intrusive_weak_ptr& other) noexcept {
-        ptr_ = other.ptr_;
+        if (this != &other) {
+            release_weak();
+            ptr_ = other.ptr_;
+            add_weak();
+        }
         return *this;
     }
     
-    // Move operations - critical for vector reallocation!
+    // Move operations - transfer ownership, no atomic ops needed
     intrusive_weak_ptr(intrusive_weak_ptr&& other) noexcept : ptr_(other.ptr_) {
         other.ptr_ = nullptr;
     }
     
     intrusive_weak_ptr& operator=(intrusive_weak_ptr&& other) noexcept {
-        ptr_ = other.ptr_;
-        other.ptr_ = nullptr;
+        if (this != &other) {
+            release_weak();
+            ptr_ = other.ptr_;
+            other.ptr_ = nullptr;
+        }
         return *this;
     }
     
+    ~intrusive_weak_ptr() {
+        release_weak();
+    }
+    
     intrusive_weak_ptr& operator=(const intrusive_ptr<T>& strong) noexcept {
+        release_weak();
         ptr_ = strong.get();
+        add_weak();
         return *this;
     }
     
@@ -234,14 +320,28 @@ public:
         return !ptr_ || ptr_->use_count() == 0;
     }
     
+    /**
+     * @brief Atomically acquire a strong reference if object is alive
+     * @return intrusive_ptr to object, or empty if expired
+     * 
+     * This is lock-free: uses CAS loop to safely increment strong count
+     * only if it's > 0. No race condition with release_ref().
+     */
     [[nodiscard]] intrusive_ptr<T> lock() const noexcept {
-        if (expired()) {
+        if (!ptr_) {
             return intrusive_ptr<T>();
         }
-        return intrusive_ptr<T>(ptr_, true);  // Must increment refcount!
+        // Atomically try to increment strong count if > 0
+        if (ptr_->try_add_ref()) {
+            // Successfully acquired strong reference
+            // Return without adding ref again (already done by try_add_ref)
+            return intrusive_ptr<T>(ptr_, false);
+        }
+        return intrusive_ptr<T>();
     }
     
     void reset() noexcept {
+        release_weak();
         ptr_ = nullptr;
     }
     
