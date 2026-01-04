@@ -470,6 +470,8 @@ TEST_CASE("intrusive_ptr concurrent copy and release", "[intrusive_ptr][threadin
 // =============================================================================
 
 // Test class for arena allocation that overrides destroy()
+// With dual-counter intrusive_ptr, destroy() only calls destructor,
+// and memory deallocation is handled by non-virtual do_destroy_weak().
 class ArenaTestObject : public intrusive_refcount {
 public:
     static int constructed;
@@ -477,7 +479,6 @@ public:
     static int destroyed_called;
     
     int value;
-    bool arena_allocated = false;
     
     explicit ArenaTestObject(int v = 0) : value(v) {
         ++constructed;
@@ -487,16 +488,11 @@ public:
         ++destructed;
     }
     
-    // Override destroy to handle arena allocation
+    // Override destroy to track calls
     void destroy() const override {
         ++destroyed_called;
-        if (!arena_allocated) {
-            delete this; // Normal heap allocation
-        } else {
-            // Arena allocation: call destructor but don't delete
-            this->~ArenaTestObject();
-            // Memory will be reclaimed when arena is reset
-        }
+        // Call destructor only - memory freed by base class do_destroy_weak()
+        this->~ArenaTestObject();
     }
     
     static void reset_counters() {
@@ -533,7 +529,7 @@ TEST_CASE("ArenaTestObject arena allocation", "[.][arena][intrusive_ptr]") {
         // Allocate from arena
         void* mem = arena.allocate(sizeof(ArenaTestObject), alignof(ArenaTestObject));
         auto* obj = new(mem) ArenaTestObject(42);
-        obj->arena_allocated = true;
+        obj->set_arena_allocated();
         
         intrusive_ptr<ArenaTestObject> ptr(obj, true);
         REQUIRE(ptr->value == 42);
@@ -561,7 +557,7 @@ TEST_CASE("ArenaTestObject multiple arena allocations", "[.][arena][intrusive_pt
         for (int i = 0; i < 100; ++i) {
             void* mem = arena.allocate(sizeof(ArenaTestObject), alignof(ArenaTestObject));
             auto* obj = new(mem) ArenaTestObject(i);
-            obj->arena_allocated = true;
+            obj->set_arena_allocated();
             ptrs.emplace_back(obj, true);
         }
         
@@ -590,7 +586,7 @@ TEST_CASE("ArenaTestObject arena reset reuse", "[.][arena][intrusive_ptr]") {
         for (int i = 0; i < 50; ++i) {
             void* mem = arena.allocate(sizeof(ArenaTestObject), alignof(ArenaTestObject));
             auto* obj = new(mem) ArenaTestObject(i);
-            obj->arena_allocated = true;
+            obj->set_arena_allocated();
             ptrs.emplace_back(obj, true);
         }
     }
@@ -614,7 +610,7 @@ TEST_CASE("ArenaTestObject arena reset reuse", "[.][arena][intrusive_ptr]") {
         for (int i = 0; i < 50; ++i) {
             void* mem = arena.allocate(sizeof(ArenaTestObject), alignof(ArenaTestObject));
             auto* obj = new(mem) ArenaTestObject(i + 100);
-            obj->arena_allocated = true;
+            obj->set_arena_allocated();
             ptrs.emplace_back(obj, true);
         }
         

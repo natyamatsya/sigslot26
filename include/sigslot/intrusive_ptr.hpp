@@ -49,19 +49,6 @@ protected:
         this->~intrusive_refcount();
     }
     
-    /**
-     * @brief Called when weak count reaches zero
-     * 
-     * At this point, the object is already destroyed (strong == 0),
-     * and no weak references remain. Safe to deallocate memory.
-     */
-    virtual void destroy_weak() const {
-        if (!m_arena_allocated) {
-            // Free memory (destructor already called in destroy())
-            ::operator delete(const_cast<intrusive_refcount*>(this));
-        }
-    }
-    
 public:
     virtual ~intrusive_refcount() = default;
     
@@ -71,10 +58,16 @@ public:
     
     void release_ref() const noexcept {
         if (m_strong.fetch_sub(1, std::memory_order_acq_rel) == 1) {
-            // Last strong reference gone - destroy object
+            // Last strong reference gone
+            // Call destroy() which runs the destructor (but doesn't free memory)
             destroy();
-            // Release the weak count held by strong references
-            release_weak_ref();
+            // After destroy(), vtable is invalid - do NOT call virtual functions!
+            // Directly handle weak count decrement and memory deallocation
+            if (m_weak.fetch_sub(1, std::memory_order_acq_rel) == 1) {
+                // Last weak reference gone - deallocate memory
+                // Can't call virtual destroy_weak() here, use non-virtual path
+                do_destroy_weak();
+            }
         }
     }
     
@@ -85,7 +78,9 @@ public:
     void release_weak_ref() const noexcept {
         if (m_weak.fetch_sub(1, std::memory_order_acq_rel) == 1) {
             // Last weak reference gone - deallocate memory
-            destroy_weak();
+            // This path is only taken when strong count was already 0,
+            // meaning destroy() was already called. Use non-virtual path.
+            do_destroy_weak();
         }
     }
     
@@ -118,9 +113,17 @@ public:
         return s > 0 ? w - 1 : w;
     }
     
-    // Mark as arena-allocated (used by default destroy() implementation)
+    // Mark as arena-allocated (used by do_destroy_weak())
     void set_arena_allocated() noexcept { m_arena_allocated = true; }
     [[nodiscard]] bool is_arena_allocated() const noexcept { return m_arena_allocated; }
+    
+private:
+    // Non-virtual memory deallocation - safe to call after destructor
+    void do_destroy_weak() const noexcept {
+        if (!m_arena_allocated) {
+            ::operator delete(const_cast<intrusive_refcount*>(this));
+        }
+    }
 };
 
 /**
