@@ -126,8 +126,10 @@ on recovering this overhead.
 
 2. **ARENA (Experimental)**: Custom bump-pointer allocator
    - Single allocation for control block + object
-   - Thread-safety requires global mutex (adds contention)
-   - Not recommended for production
+   - Now includes safe reset tracking via `pending_weak_refs_` counter
+   - `safe_reset()` waits for all weak references to clear before reuse
+   - Benchmarks show 21% slower than DEFAULT for connect (156 ns vs 129 ns)
+   - Not recommended for general use
 
 3. **DEFAULT**: System allocator
    - Used when jemalloc/tcmalloc/mimalloc detected
@@ -135,18 +137,16 @@ on recovering this overhead.
 
 **Benchmark Results** (AMD Ryzen 9 7950X3D, MSVC 19.50):
 
-| Strategy | Connect Time | vs Baseline | Thread-Safety |
-|----------|-------------|-------------|---------------|
-| **PMR** | **167 ns** | **3% faster** ✅ | Thread-local pools |
-| ARENA (TLS) | 157 ns | 9% faster | ❌ Crashes (cross-thread `shared_ptr`) |
-| ARENA (mutex) | 174 ns | -1% slower | ✅ Global mutex contention |
-| DEFAULT | 172 ns | baseline | ✅ MSVC allocator |
+| Strategy | Connect Time | vs Lock-Free | Thread-Safety |
+|----------|-------------|--------------|---------------|
+| **DEFAULT** | **129 ns** | **baseline** ✅ | Lock-free CAS |
+| ARENA (safe) | 156 ns | -21% slower | ✅ Safe reset tracking |
 
 **Key Findings**:
-- PMR provides best balance of performance and safety
-- MSVC's default allocator is already well-optimized
-- Arena allocator incompatible with `shared_ptr` threading model
-- For larger gains (20-50%), link with jemalloc/mimalloc
+- DEFAULT with lock-free CAS is optimal (129 ns)
+- ARENA safe reset adds overhead from `pending_weak_refs_` tracking
+- For larger allocation gains (20-50%), link with jemalloc/mimalloc
+- Custom pools not worth the complexity vs specialized allocators
 
 **CMake Usage**:
 ```cmake
@@ -289,17 +289,46 @@ the larger connect regression.
 
 ---
 
-### Phase 5: Rx & Advanced Optimizations (Future)
+### Phase 5: Rx & Advanced Optimizations
 
 #### 5.1 Batch Emission
-**Status**: Design phase  
-**Impact**: Low-Medium  
+**Status**: ✅ **COMPLETE**  
+**Impact**: High (3.9x faster for sequential emissions)  
 **Effort**: Low
 
-For reactive pipelines emitting many values in sequence. Optimize `rx::` operators
-that emit multiple values rapidly.
+For reactive pipelines emitting many values in sequence. Caches the slot snapshot
+to avoid repeated atomic loads during burst emissions.
+
+```cpp
+// RAII batch emitter caches slot snapshot
+{
+    auto batch = sig.batch();
+    for (int i = 0; i < 1000; ++i) {
+        batch.emit(i);  // Uses cached snapshot
+    }
+}
+```
+
+**Implementation**:
+- `batch_emitter` class holds `cow_copy_type<list_type>` snapshot
+- `sig.batch()` returns RAII batch emitter
+- `batch.emit()` / `batch()` emit using cached snapshot
+- Snapshot is consistent for lifetime of batch_emitter
+
+**Benchmark Results** (AMD Ryzen 9 7950X3D, MSVC 19.50):
+
+| Emissions | Batch | Regular | Speedup |
+|-----------|-------|---------|---------|
+| 100 | 154 ns | 598 ns | **3.9x faster** |
+| 1000 | 1514 ns | 5965 ns | **3.9x faster** |
+| Throughput | **650 M/s** | 170 M/s | **3.8x higher** |
+
+**Real-World Impact** (HFT Reactive Demo):
+- Throughput: 1.19M → **1.33M ticks/sec** (+12%)
+- Used for 100-tick burst emissions in exchange simulator
 
 #### 5.2 Compile-Time Connections
+**Status**: Future  
 For static slot configurations known at compile time.
 
 #### 5.3 SIMD Emission
