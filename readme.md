@@ -10,13 +10,71 @@ This fork (`sigslot26`) builds on [palacaze/sigslot](https://github.com/palacaze
 
 ## Changes from upstream
 
-- **C++23 requirement** - Uses `std::print`, deducing this, and other C++23 features
+### Async & Reactive
+- **C++23 requirement** - Uses `std::print`, deducing this, `std::expected`, and other C++23 features
 - **std::execution (P2300) integration** - Signals can be used as senders via `sigslot::async::as_sender()`
 - **Coroutine support** - Signals are awaitable with `co_await sigslot::async::make_awaitable(sig)`
 - **Reactive extensions** - `rx::map`, `rx::filter`, `rx::throttle`, `rx::debounce`, `rx::distinct`, `rx::scan`, `rx::buffer`, `rx::take`, `rx::skip`, `rx::merge`, `rx::combine_latest`, `rx::zip`, `rx::observe_on`
 - **Qt async adapters** - `connect_on_event_loop()`, `connect_on_thread()`, `as_qfuture()`
+
+### High-Performance Signal Variants
+- **`signal_inline`** - Non-thread-safe signal with inline `slot_variant` storage for ~60% faster emission
+- **`signal_inline_rw`** - Thread-safe variant using read-write locks
+- **`signal_inline_rcu`** - Lock-free variant using RCU (Read-Copy-Update) pattern
+- **`signal_inline_seqlock`** - Lock-free variant using seqlock with fixed-capacity storage (fastest thread-safe option)
+
+### Performance Optimizations
+- **`slot_variant`** - Inline function pointer dispatch eliminates virtual call overhead
+- **Fixed-capacity `fixed_vector`** - Thread-safe container with atomic size for seqlock pattern
+- **Cache line padding** - Configurable via `SIGSLOT_CACHE_LINE_PADDING` to reduce false sharing
+- **Index caching** - Configurable via `SIGSLOT_INDEX_CACHING` to reduce atomic loads on hot path
+- **Arena allocator** - Bump-pointer allocation for slot objects (64KB chunks)
+
+### Infrastructure
 - **Catch2 test framework** - Replaces assert-based tests with Catch2
-- **CI improvements** - Multi-platform builds with sanitizer coverage
+- **CI improvements** - Multi-platform builds with sanitizer coverage (ASan, TSan, UBSan)
+- **Comprehensive benchmarks** - Google Benchmark integration for performance analysis
+
+## High-Performance Signal Variants
+
+For performance-critical scenarios, `sigslot26` provides specialized signal implementations in `<sigslot/signal-inline.hpp>`:
+
+```cpp
+#include <sigslot/signal-inline.hpp>
+
+// Non-thread-safe, fastest option (~60% faster than signal_base)
+sigslot::signal_inline<int> sig;
+sig.connect([](int x) { /* ... */ });
+sig(42);
+
+// Thread-safe with read-write lock
+sigslot::signal_inline_rw<int> sig_rw;
+sig_rw.connect([](int x) { /* ... */ });
+sig_rw(42);  // Safe from multiple threads
+
+// Lock-free with RCU pattern
+sigslot::signal_inline_rcu<int> sig_rcu;
+sig_rcu.connect([](int x) { /* ... */ });
+sig_rcu(42);  // Lock-free emission
+
+// Lock-free with seqlock (fastest thread-safe, fixed capacity)
+sigslot::signal_inline_seqlock<16, int> sig_seq;  // Max 16 slots
+auto result = sig_seq.connect([](int x) { /* ... */ });
+if (!result) {
+    // Handle capacity exceeded: result.error() == seqlock_error::capacity_exceeded
+}
+sig_seq(42);  // Lock-free emission, wait-free when no writer active
+```
+
+### Performance Comparison
+
+| Signal Type | Single Slot | Thread Safety | Notes |
+|-------------|-------------|---------------|-------|
+| `signal_inline` | 4.5 ns | ❌ None | Fastest, single-threaded only |
+| `signal_inline_seqlock` | 4.7 ns | ✅ Lock-free | Fixed capacity, retry on conflict |
+| `signal_inline_rw` | 7.6 ns | ✅ RW-lock | Unbounded, read-heavy workloads |
+| `signal_inline_rcu` | 9.9 ns | ✅ Lock-free | Unbounded, copy-on-write |
+| `signal_base` (default) | 10.6 ns | ✅ Full | Full features, connection objects |
 
 ## Features
 
