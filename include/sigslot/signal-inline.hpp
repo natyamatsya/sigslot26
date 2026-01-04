@@ -301,7 +301,7 @@ public:
         std::lock_guard lock(write_mutex_);
         
         // Create new list with existing slots + new one
-        auto old_list = slots_.load(std::memory_order_acquire);
+        auto old_list = load_slots();
         auto new_list = std::make_shared<slot_list>();
         new_list->reserve(old_list->size() + 1);
         
@@ -313,14 +313,14 @@ public:
             slot_type::make_plain(std::forward<Callable>(c), gid)
         ));
         
-        slots_.store(std::move(new_list), std::memory_order_release);
+        store_slots(std::move(new_list));
     }
     
     template<typename Pmf, typename Ptr>
     void connect(Pmf&& pmf, Ptr&& ptr, group_id gid = group_id{}) {
         std::lock_guard lock(write_mutex_);
         
-        auto old_list = slots_.load(std::memory_order_acquire);
+        auto old_list = load_slots();
         auto new_list = std::make_shared<slot_list>();
         new_list->reserve(old_list->size() + 1);
         
@@ -331,7 +331,7 @@ public:
             slot_type::make_pmf(std::forward<Pmf>(pmf), std::forward<Ptr>(ptr), gid)
         ));
         
-        slots_.store(std::move(new_list), std::memory_order_release);
+        store_slots(std::move(new_list));
     }
     
     /**
@@ -342,7 +342,7 @@ public:
         if (blocked_.load(std::memory_order_relaxed)) return;
         
         // Lock-free: just atomic load, no mutex
-        auto slots = slots_.load(std::memory_order_acquire);
+        auto slots = load_slots();
         
         for (auto& slot : *slots) {
             if (slot) {
@@ -353,25 +353,54 @@ public:
     
     void disconnect_all() {
         std::lock_guard lock(write_mutex_);
-        slots_.store(std::make_shared<slot_list>(), std::memory_order_release);
+        store_slots(std::make_shared<slot_list>());
     }
     
     void block() noexcept { blocked_.store(true, std::memory_order_relaxed); }
     void unblock() noexcept { blocked_.store(false, std::memory_order_relaxed); }
     
     [[nodiscard]] std::size_t slot_count() const {
-        auto slots = slots_.load(std::memory_order_acquire);
+        auto slots = load_slots();
         return slots->size();
     }
 
 private:
+    // Use deprecated but widely-supported atomic operations for shared_ptr
+    // Apple Clang's libc++ doesn't support std::atomic<std::shared_ptr<T>>
+#if defined(_MSC_VER)
+#pragma warning(push)
+#pragma warning(disable: 4996)  // Deprecated
+#define SIGSLOT_DEPRECATED_PUSH
+#elif defined(__clang__) || defined(__GNUC__)
+#pragma GCC diagnostic push
+#pragma GCC diagnostic ignored "-Wdeprecated-declarations"
+#define SIGSLOT_DEPRECATED_PUSH
+#endif
+    
+    std::shared_ptr<slot_list> load_slots() const {
+        return std::atomic_load_explicit(&slots_, std::memory_order_acquire);
+    }
+    
+    void store_slots(std::shared_ptr<slot_list> new_slots) {
+        std::atomic_store_explicit(&slots_, std::move(new_slots), std::memory_order_release);
+    }
+    
+#ifdef SIGSLOT_DEPRECATED_PUSH
+#if defined(_MSC_VER)
+#pragma warning(pop)
+#elif defined(__clang__) || defined(__GNUC__)
+#pragma GCC diagnostic pop
+#endif
+#undef SIGSLOT_DEPRECATED_PUSH
+#endif
+
     // ========================================================================
     // Hot data - read on every emission
     // ========================================================================
 #ifdef SIGSLOT_CACHE_LINE_PADDING
-    alignas(cache_line_size) std::atomic<std::shared_ptr<slot_list>> slots_;
+    alignas(cache_line_size) std::shared_ptr<slot_list> slots_;
 #else
-    std::atomic<std::shared_ptr<slot_list>> slots_;
+    std::shared_ptr<slot_list> slots_;
 #endif
     std::atomic<bool> blocked_{false};
     
