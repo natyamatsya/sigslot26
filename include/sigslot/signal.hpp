@@ -480,6 +480,18 @@ T& cow_write(copy_on_write<T>& v) {
  * See: https://en.cppreference.com/w/cpp/memory/shared_ptr/atomic
  * See: https://en.wikipedia.org/wiki/Read-copy-update
  */
+
+// Suppress deprecation warnings for std::atomic_*() free functions on shared_ptr.
+// We intentionally use these deprecated functions for portability: std::atomic<shared_ptr<T>>
+// (C++20 P0718R2) is not yet reliably supported across all standard library implementations.
+#if defined(_MSC_VER)
+#pragma warning(push)
+#pragma warning(disable: 4996)  // STL4029: std::atomic_*() for shared_ptr deprecated
+#elif defined(__clang__) || defined(__GNUC__)
+#pragma GCC diagnostic push
+#pragma GCC diagnostic ignored "-Wdeprecated-declarations"
+#endif
+
 template<typename T>
 class rcu_cow {
 public:
@@ -572,6 +584,12 @@ private:
     // std::atomic<shared_ptr<T>> (C++20 P0718R2) is not yet supported by all implementations.
     std::shared_ptr<T> m_published;
 };
+
+#if defined(_MSC_VER)
+#pragma warning(pop)
+#elif defined(__clang__) || defined(__GNUC__)
+#pragma GCC diagnostic pop
+#endif
 
 /**
  * @brief RAII guard for RCU write operations.
