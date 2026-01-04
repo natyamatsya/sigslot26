@@ -488,46 +488,54 @@ public:
 - [ ] Ensure proper destruction semantics
 
 #### 6.3 Integration with signal_base
-**Status**: 📋 Planned  
-**Milestone**: `signal_base` uses `slot_variant` internally
+**Status**: ✅ Partial (core slots complete, extended slots use fallback)  
+**Milestone**: `slot_base` uses inline function pointer for dispatch
 
-**Strategy**: Hybrid approach preserving extensibility
+**Actual Implementation**: Inline function pointer in `slot_base` (simpler than full variant)
 
 ```cpp
-template<GroupId Group, typename Lockable, typename... T>
-class signal_base {
-    // Primary storage: variant-based slots (fast path)
-    using fast_slot = slot_variant<Group, T...>;
+template<typename Group, typename... Args>
+class slot_base : public grouped_slot<Group> {
+#ifdef SIGSLOT_USE_SLOT_VARIANT
+    // Inline function pointer eliminates vtable lookup
+    using call_fn_t = bool(*)(slot_base*, Args...);
+    call_fn_t call_fn_;
     
-    // Fallback: virtual dispatch for user-defined slot types
-    using dynamic_slot = slot_strong_ptr<slot_base<Group, T...>>;
-    
-    // Unified slot storage
-    using slot_storage = std::variant<fast_slot, dynamic_slot>;
-    using slots_type = sbo_container<slot_storage, 3>;
-    
-    // Emission dispatches based on variant index
-    template<typename Self, typename... U>
-    void operator()(this Self&& self, U&&... args) {
-        for (auto& slot : slots) {
-            std::visit([&](auto& s) {
-                if constexpr (std::same_as<decltype(s), fast_slot&>) {
-                    s(std::forward<U>(args)...);  // Direct call
-                } else {
-                    (*s)(std::forward<U>(args)...);  // Virtual call
-                }
-            }, slot);
+    // Each slot subclass provides its own call_fn_impl
+    template<typename... U>
+    void operator()(U&&... u) {
+        if (connected() && !blocked()) {
+            call_fn_(this, std::forward<U>(u)...);  // Direct call
         }
     }
+#else
+    // Original virtual dispatch
+    template<typename... U>
+    void operator()(U&&... u) {
+        if (connected() && !blocked()) {
+            call_slot(std::forward<U>(u)...);  // Virtual call
+        }
+    }
+#endif
 };
 ```
 
 **Integration Tasks**:
-- [ ] Update `signal_base` slot container type
-- [ ] Modify `connect()` overloads to construct `slot_variant`
-- [ ] Update `disconnect()` to handle both storage types
-- [ ] Ensure RCU/COW compatibility with new storage
-- [ ] Preserve `connection` / `scoped_connection` semantics
+- [x] Add `SIGSLOT_USE_SLOT_VARIANT` CMake option
+- [x] Add inline `call_fn_` pointer to `slot_base` class
+- [x] Update `slot`, `slot_pmf`, `slot_tracked`, `slot_pmf_tracked` with direct dispatch
+- [x] Add fallback virtual dispatch constructor for extended slots
+- [ ] ~~Update `signal_base` slot container type~~ (not needed - inline fn ptr approach)
+- [x] Preserve `connection` / `scoped_connection` semantics
+
+**Implementation Status** (2026-01-04):
+The inline function pointer approach is implemented. When `SIGSLOT_USE_SLOT_VARIANT=ON`:
+- **All 6 slot types** use direct function pointer dispatch (no vtable lookup)
+
+**File Split** (2026-01-04): Resolved circular dependency by creating `connection.hpp`:
+- `connection.hpp` now contains `slot_state`, `connection`, `scoped_connection`, and `GroupId` concept
+- All 6 slot types now use inline function pointer dispatch when enabled
+- Cross-compiler compatibility ensured (MSVC, Clang, GCC)
 
 #### 6.4 Optimization & Tuning
 **Status**: 📋 Planned  
