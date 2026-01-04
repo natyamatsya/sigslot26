@@ -72,7 +72,7 @@ static void BM_EmissionBatch100(benchmark::State& state) {
     for (auto _ : state) {
         auto batch = sig.batch();
         for (int i = 0; i < 100; ++i) {
-            batch.emit(i);
+            batch.batch_emit(i);
         }
     }
     state.SetItemsProcessed(state.iterations() * 100);
@@ -97,7 +97,7 @@ static void BM_EmissionBatch1000(benchmark::State& state) {
     for (auto _ : state) {
         auto batch = sig.batch();
         for (int i = 0; i < 1000; ++i) {
-            batch.emit(i);
+            batch.batch_emit(i);
         }
     }
     state.SetItemsProcessed(state.iterations() * 1000);
