@@ -794,6 +794,46 @@ Sigslot tests and examples rely on a lot a identical callables which trigger thi
 behaviour, which is why it deactivates this particular optimization on the affected
 compilers.
 
+### Performance Benchmarks
+
+#### Phase 1 & 2 Optimization Results (January 4, 2026)
+
+**Note:** These are microbenchmarks measuring individual operations in isolation. Real-world performance may vary depending on usage patterns, system load, and compiler optimizations.
+
+**Test System:**
+- **CPU**: AMD Ryzen 9 7950X3D 16-Core Processor @ 4.2GHz (32 logical cores)
+- **OS**: Microsoft Windows 11 Pro (Build 26200)
+- **Compiler**: Microsoft C/C++ Optimizing Compiler Version 19.44.35222 for x64
+- **Build**: Release with LTO (/GL /LTCG), x64 target
+- **Memory**: 63.16 GB total
+
+| Benchmark | Baseline (ns) | Optimized (ns) | Improvement |
+|------------|----------------|-----------------|-------------|
+| Signal Construction | 30.1 | 63.4 | -111% (slower) |
+| Signal Destruction | 240 | 275 | -15% (slower) |
+| Connect Single Slot | 64.6 | 203 | -214% (slower) |
+| **Emission Single Slot** | **9.20** | **6.14** | **33% faster** |
+| **Emission Multiple Slots** | **17.6** | **14.1** | **20% faster** |
+| Slot Count | 9.04 | 6.20 | 31% faster |
+
+**Key Findings:**
+- ✅ **Major wins**: Emission latency improved 20-33% (the hot path)
+- ⚠️ **Trade-offs**: Construction/connect slower due to cache alignment and RCU overhead
+- 📊 **Overall**: Optimizations successfully improve the most frequent operation
+
+**Running Benchmarks:**
+```bash
+cmake -B build -DSIGSLOT_ENABLE_BENCHMARK=ON
+cmake --build build --target signal_benchmarks threaded_benchmarks
+./build/benchmark/benchmarks/Release/signal_benchmarks
+```
+
+**System Information Script:**
+```powershell
+# Generate detailed system info for benchmark reports
+.\scripts\get-system-info.ps1
+```
+
 ### Known bugs
 
 Using generic lambdas with GCC less than version 7.4 can trigger [Bug #68071](https://gcc.gnu.org/bugzilla/show_bug.cgi?id=68071).
