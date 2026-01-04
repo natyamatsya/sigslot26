@@ -422,7 +422,11 @@ int main(int argc, char* argv[]) {
 
     std::cout << "\n\n\n\n"; // Make room for display
 
-    const unsigned int num_workers = std::thread::hardware_concurrency();
+    // Allow overriding worker count via second argument (default: hardware_concurrency)
+    unsigned int num_workers = std::thread::hardware_concurrency();
+    if (argc >= 3) {
+        num_workers = static_cast<unsigned int>(std::stoi(argv[2]));
+    }
     const uint64_t samples_per_worker = 10'000'000;
 
     const char* mode_name = mode == execution_mode::stdexec      ? "stdexec"
