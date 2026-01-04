@@ -822,15 +822,19 @@ public:
 protected:
     virtual void do_disconnect() {}
 
-    [[nodiscard]] auto index() const { return m_index; }
+    [[nodiscard]] std::size_t index() const noexcept { 
+        return m_index.load(std::memory_order_relaxed); 
+    }
 
-    auto& index() { return m_index; }
+    void set_index(std::size_t idx) noexcept { 
+        m_index.store(idx, std::memory_order_relaxed); 
+    }
 
 private:
     template<GroupId, typename, typename...>
     friend class ::sigslot::signal_base;
 
-    std::size_t m_index; // index into the array of slot pointers inside the signal
+    std::atomic<std::size_t> m_index; // index into the array of slot pointers inside the signal
     std::atomic<bool> m_connected;
     std::atomic<bool> m_blocked;
 };
@@ -1939,7 +1943,7 @@ protected:
                         if (idx < slts.size() && slts[idx] && slts[idx].get() == state) {
                             std::swap(slts[idx], slts.back());
                             if (idx < slts.size() - 1) {
-                                slts[idx]->index() = idx;
+                                slts[idx]->set_index(idx);
                             }
                             slts.pop_back();
                         }
@@ -1958,7 +1962,7 @@ protected:
                     auto& slts = group.slts;
                     if (idx < slts.size() && slts[idx] && slts[idx].get() == state) {
                         std::swap(slts[idx], slts.back());
-                        slts[idx]->index() = idx;
+                        slts[idx]->set_index(idx);
                         slts.pop_back();
                     }
                     return;
@@ -2011,7 +2015,7 @@ private:
 
                 // add the slot with correct index
                 auto& target_group = (*new_groups)[group_idx];
-                s->index() = target_group.slts.size();
+                s->set_index(target_group.slts.size());
                 target_group.slts.push_back(std::move(s));
                 
                 if (m_slots.try_publish(current, new_groups)) {
@@ -2031,7 +2035,7 @@ private:
             if (it == m_slots.end() || it->gid != gid) {
                 it = m_slots.insert(it, {{}, gid});
             }
-            s->index() = it->slts.size();
+            s->set_index(it->slts.size());
             it->slts.push_back(std::move(s));
         }
     }
@@ -2116,7 +2120,7 @@ private:
                         if (cond(slts[i])) {
                             std::swap(slts[i], slts.back());
                             if (i < slts.size() - 1) {
-                                slts[i]->index() = i;
+                                slts[i]->set_index(i);
                             }
                             slts.pop_back();
                             ++actual_count;
@@ -2139,7 +2143,7 @@ private:
                 while (i < slts.size()) {
                     if (cond(slts[i])) {
                         std::swap(slts[i], slts.back());
-                        slts[i]->index() = i;
+                        slts[i]->set_index(i);
                         slts.pop_back();
                         ++count;
                     } else {
