@@ -306,20 +306,40 @@ For static slot configurations known at compile time.
 Vectorized slot invocation for trivial callables.
 
 #### 5.4 Lock-Free Connect/Disconnect
-**Status**: Foundation Ready  
+**Status**: ✅ **COMPLETE**  
 **Impact**: High  
 **Effort**: High
 
-Full lock-free implementation using CAS loops. The dual-counter `intrusive_ptr`
-(Phase 4.2) provides the necessary foundation:
-- Lock-free `weak_ptr::lock()` already implemented
-- Atomic reference counting ready for concurrent access
-- RCU pattern for slot container already in place
+Full lock-free implementation using CAS loops. Built on dual-counter `intrusive_ptr`:
 
-**Remaining Work**:
-- CAS loop for slot vector modification
-- ABA protection for concurrent connect/disconnect
-- Hazard pointer or epoch-based reclamation (if needed)
+```cpp
+// Lock-free add_slot using CAS loop
+void add_slot(slot_ptr&& s) {
+    while (true) {
+        auto current = m_slots.read();
+        auto new_groups = std::make_shared<list_type>(*current);
+        // ... modify new_groups ...
+        if (m_slots.try_publish(current, new_groups)) {
+            break;  // Success!
+        }
+        // CAS failed - retry with fresh snapshot
+    }
+}
+```
+
+**Implemented**:
+- `try_publish()` method in `rcu_cow` using `atomic_compare_exchange_strong`
+- Lock-free `add_slot()`, `disconnect()`, `disconnect_all()`, `clean()`, `disconnect_if()`
+- Removed `m_mutex` from `signal_base` for thread-safe signals
+- Non-thread-safe signals use direct modification (no overhead)
+
+**Benchmark Results** (AMD Ryzen 9 7950X3D, MSVC 19.50):
+
+| Metric | Phase 4 (mutex) | Phase 5 (lock-free) | Improvement |
+|--------|-----------------|---------------------|-------------|
+| Connect Single Slot | 167 ns | 129 ns | **23% faster** |
+| Thread-Safe Construction | 0.80 ns | 0.77 ns | **4% faster** |
+| Thread-Safe Emission | 5.09 ns | 5.01 ns | **2% faster** |
 
 ---
 

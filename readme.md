@@ -809,39 +809,40 @@ compilers.
 
 ##### Single-Threaded Benchmarks
 
-| Benchmark | Phase 0 (ns) | Phase 3 SBO (ns) | Phase 4 dual-counter (ns) | vs Baseline |
-|-----------|--------------|------------------|---------------------------|-------------|
-| Signal Construction | 30.1 | 63.5 | 64.8 | -115% |
-| Signal Destruction | 240 | 308 | 256 | -7% |
-| Connect Single Slot | 64.6 | 160 | **167** | -159% |
-| **Emission Single Slot** | **9.20** | **6.01** | **5.86** | **36% faster** |
-| **Emission Multiple Slots** | **17.6** | **14.2** | **14.3** | **19% faster** |
-| Slot Count | 9.04 | 6.25 | 6.28 | 31% faster |
+| Benchmark | Phase 0 (ns) | Phase 4 dual-counter (ns) | Phase 5 lock-free (ns) | vs Baseline |
+|-----------|--------------|---------------------------|------------------------|-------------|
+| Signal Construction | 30.1 | 64.8 | 55.6 | -85% |
+| Signal Destruction | 240 | 256 | 261 | -9% |
+| **Connect Single Slot** | 64.6 | 167 | **129** | -100% |
+| **Emission Single Slot** | **9.20** | **5.86** | **5.97** | **35% faster** |
+| **Emission Multiple Slots** | **17.6** | **14.3** | **14.7** | **16% faster** |
+| Slot Count | 9.04 | 6.28 | 6.18 | **32% faster** |
 
 ##### Multi-Threaded Benchmarks
 
-| Benchmark | Phase 0 (ns) | Phase 3 SBO (ns) | Phase 4 dual-counter (ns) | vs Baseline |
-|-----------|--------------|------------------|---------------------------|-------------|
-| Thread-Safe Construction | 1.14 | 1.18 | 0.80 | **30% faster** |
-| **Thread-Safe Emission** | **5.32** | **5.18** | **5.09** | **4% faster** |
-| Concurrent Emission (1 thread) | 61,006 | 59,921 | 57,732 | **5% faster** |
-| Concurrent Emission (2 threads) | 87,692 | 88,113 | 85,638 | **2% faster** |
-| Concurrent Emission (4 threads) | 147,187 | 149,939 | 144,479 | **2% faster** |
-| Concurrent Connect (1 thread) | 49,416 | 55,558 | 54,658 | -11% |
-| Concurrent Connect (2 threads) | 84,034 | 88,539 | 84,987 | -1% |
-| Concurrent Connect (4 threads) | ~140,000 | 143,528 | 138,146 | **1% faster** |
+| Benchmark | Phase 0 (ns) | Phase 4 dual-counter (ns) | Phase 5 lock-free (ns) | vs Baseline |
+|-----------|--------------|---------------------------|------------------------|-------------|
+| Thread-Safe Construction | 1.14 | 0.80 | **0.77** | **32% faster** |
+| **Thread-Safe Emission** | **5.32** | **5.09** | **5.01** | **6% faster** |
+| Concurrent Emission (1 thread) | 61,006 | 57,732 | 57,158 | **6% faster** |
+| Concurrent Emission (2 threads) | 87,692 | 85,638 | 84,530 | **4% faster** |
+| Concurrent Emission (4 threads) | 147,187 | 144,479 | 145,228 | **1% faster** |
+| Concurrent Connect (1 thread) | 49,416 | 54,658 | 54,728 | -11% |
+| Concurrent Connect (2 threads) | 84,034 | 84,987 | 85,945 | -2% |
+| Concurrent Connect (4 threads) | ~140,000 | 138,146 | 138,749 | **1% faster** |
 
 **Key Findings:**
 - ✅ **Phase 3 SBO**: Small Buffer Optimization for up to 3 slots per group
 - ✅ **Phase 4 dual-counter intrusive_ptr**: Lock-free weak references via CAS
-- ✅ **Emission latency**: Improved 19-36% vs baseline (the hot path)
-- ✅ **Connect improved**: 167 ns (11% faster than Phase 4 with std::weak_ptr anchor)
+- ✅ **Phase 5 lock-free connect/disconnect**: Mutex removed, CAS-based updates
+- ✅ **Emission latency**: Improved 16-35% vs baseline (the hot path)
+- ✅ **Connect improved**: 129 ns (23% faster than Phase 4 with mutex)
 - ✅ **All concurrent operations**: Now faster or equal to baseline
-- ✅ **No std::weak_ptr anchor**: Eliminated 16-byte overhead per slot
 
 **Current Implementation:**
+- **Fully lock-free** for thread-safe signals (no mutex)
 - Uses **dual-counter `intrusive_ptr`** with embedded strong + weak reference counts
-- Lock-free `weak_ptr::lock()` via atomic CAS loop
+- Lock-free `weak_ptr::lock()` and connect/disconnect via atomic CAS loops
 - PMR (Polymorphic Memory Resource) enables custom allocation strategies
 - 16 bytes for counters fits in cache line with 3-slot SBO
 
