@@ -246,6 +246,220 @@ TEST_CASE("signal_inline_rcu member function", "[signal_inline_rcu]") {
 }
 
 // =============================================================================
+// fixed_vector tests
+// =============================================================================
+
+namespace {
+    // Track construction/destruction for leak detection
+    struct TrackedObject {
+        static inline int constructions = 0;
+        static inline int destructions = 0;
+        static void reset() { constructions = 0; destructions = 0; }
+        
+        int value;
+        TrackedObject(int v = 0) : value(v) { ++constructions; }
+        TrackedObject(const TrackedObject& o) : value(o.value) { ++constructions; }
+        TrackedObject(TrackedObject&& o) noexcept : value(o.value) { ++constructions; }
+        ~TrackedObject() { ++destructions; }
+    };
+}
+
+TEST_CASE("fixed_vector default construction", "[fixed_vector]") {
+    sigslot::detail::fixed_vector<int, 4> vec;
+    
+    REQUIRE(vec.size() == 0);
+    REQUIRE(vec.empty());
+    REQUIRE_FALSE(vec.full());
+    REQUIRE(vec.capacity() == 4);
+}
+
+TEST_CASE("fixed_vector single element", "[fixed_vector]") {
+    sigslot::detail::fixed_vector<int, 4> vec;
+    
+    REQUIRE(vec.emplace_back(42));
+    
+    REQUIRE(vec.size() == 1);
+    REQUIRE_FALSE(vec.empty());
+    REQUIRE_FALSE(vec.full());
+    REQUIRE(vec[0] == 42);
+}
+
+TEST_CASE("fixed_vector fill to capacity", "[fixed_vector]") {
+    sigslot::detail::fixed_vector<int, 4> vec;
+    
+    REQUIRE(vec.emplace_back(1));
+    REQUIRE(vec.emplace_back(2));
+    REQUIRE(vec.emplace_back(3));
+    REQUIRE(vec.emplace_back(4));
+    
+    REQUIRE(vec.size() == 4);
+    REQUIRE(vec.full());
+    REQUIRE(vec[0] == 1);
+    REQUIRE(vec[1] == 2);
+    REQUIRE(vec[2] == 3);
+    REQUIRE(vec[3] == 4);
+}
+
+TEST_CASE("fixed_vector overflow returns false", "[fixed_vector]") {
+    sigslot::detail::fixed_vector<int, 2> vec;
+    
+    REQUIRE(vec.emplace_back(1));
+    REQUIRE(vec.emplace_back(2));
+    REQUIRE_FALSE(vec.emplace_back(3));  // Should fail
+    
+    REQUIRE(vec.size() == 2);
+    REQUIRE(vec.full());
+    // Verify existing elements unchanged
+    REQUIRE(vec[0] == 1);
+    REQUIRE(vec[1] == 2);
+}
+
+TEST_CASE("fixed_vector clear", "[fixed_vector]") {
+    sigslot::detail::fixed_vector<int, 4> vec;
+    
+    vec.emplace_back(1);
+    vec.emplace_back(2);
+    vec.emplace_back(3);
+    REQUIRE(vec.size() == 3);
+    
+    vec.clear();
+    
+    REQUIRE(vec.size() == 0);
+    REQUIRE(vec.empty());
+    REQUIRE_FALSE(vec.full());
+}
+
+TEST_CASE("fixed_vector clear calls destructors", "[fixed_vector]") {
+    TrackedObject::reset();
+    
+    {
+        sigslot::detail::fixed_vector<TrackedObject, 4> vec;
+        vec.emplace_back(1);
+        vec.emplace_back(2);
+        vec.emplace_back(3);
+        
+        REQUIRE(TrackedObject::constructions == 3);
+        REQUIRE(TrackedObject::destructions == 0);
+        
+        vec.clear();
+        
+        REQUIRE(TrackedObject::destructions == 3);
+    }
+    
+    // Destructor shouldn't double-destruct after clear
+    REQUIRE(TrackedObject::destructions == 3);
+}
+
+TEST_CASE("fixed_vector destructor calls element destructors", "[fixed_vector]") {
+    TrackedObject::reset();
+    
+    {
+        sigslot::detail::fixed_vector<TrackedObject, 4> vec;
+        vec.emplace_back(1);
+        vec.emplace_back(2);
+        
+        REQUIRE(TrackedObject::constructions == 2);
+        REQUIRE(TrackedObject::destructions == 0);
+    }
+    
+    REQUIRE(TrackedObject::destructions == 2);
+}
+
+TEST_CASE("fixed_vector reuse after clear", "[fixed_vector]") {
+    sigslot::detail::fixed_vector<int, 2> vec;
+    
+    // Fill
+    REQUIRE(vec.emplace_back(1));
+    REQUIRE(vec.emplace_back(2));
+    REQUIRE(vec.full());
+    
+    // Clear and refill
+    vec.clear();
+    REQUIRE(vec.empty());
+    
+    REQUIRE(vec.emplace_back(10));
+    REQUIRE(vec.emplace_back(20));
+    REQUIRE(vec.full());
+    
+    REQUIRE(vec[0] == 10);
+    REQUIRE(vec[1] == 20);
+}
+
+TEST_CASE("fixed_vector with capacity 1", "[fixed_vector]") {
+    sigslot::detail::fixed_vector<int, 1> vec;
+    
+    REQUIRE(vec.capacity() == 1);
+    REQUIRE(vec.empty());
+    REQUIRE_FALSE(vec.full());
+    
+    REQUIRE(vec.emplace_back(42));
+    REQUIRE(vec.full());
+    REQUIRE_FALSE(vec.emplace_back(99));
+    
+    REQUIRE(vec[0] == 42);
+}
+
+TEST_CASE("fixed_vector data pointer stability", "[fixed_vector]") {
+    sigslot::detail::fixed_vector<int, 4> vec;
+    
+    vec.emplace_back(1);
+    int* ptr1 = vec.data();
+    
+    vec.emplace_back(2);
+    vec.emplace_back(3);
+    int* ptr2 = vec.data();
+    
+    // Data pointer must remain stable (no reallocation)
+    REQUIRE(ptr1 == ptr2);
+}
+
+TEST_CASE("fixed_vector const access", "[fixed_vector]") {
+    sigslot::detail::fixed_vector<int, 4> vec;
+    vec.emplace_back(42);
+    
+    const auto& const_vec = vec;
+    
+    REQUIRE(const_vec.size() == 1);
+    REQUIRE(const_vec[0] == 42);
+    REQUIRE(const_vec.data() != nullptr);
+    REQUIRE_FALSE(const_vec.empty());
+    REQUIRE_FALSE(const_vec.full());
+    REQUIRE(const_vec.capacity() == 4);
+}
+
+TEST_CASE("fixed_vector with complex type", "[fixed_vector]") {
+    sigslot::detail::fixed_vector<std::string, 3> vec;
+    
+    REQUIRE(vec.emplace_back("hello"));
+    REQUIRE(vec.emplace_back("world"));
+    REQUIRE(vec.emplace_back("!"));
+    
+    REQUIRE(vec[0] == "hello");
+    REQUIRE(vec[1] == "world");
+    REQUIRE(vec[2] == "!");
+    
+    vec.clear();
+    REQUIRE(vec.empty());
+}
+
+TEST_CASE("fixed_vector emplace_back with multiple args", "[fixed_vector]") {
+    struct Point {
+        int x, y;
+        Point(int x_, int y_) : x(x_), y(y_) {}
+    };
+    
+    sigslot::detail::fixed_vector<Point, 2> vec;
+    
+    REQUIRE(vec.emplace_back(10, 20));
+    REQUIRE(vec.emplace_back(30, 40));
+    
+    REQUIRE(vec[0].x == 10);
+    REQUIRE(vec[0].y == 20);
+    REQUIRE(vec[1].x == 30);
+    REQUIRE(vec[1].y == 40);
+}
+
+// =============================================================================
 // signal_inline_seqlock tests (lock-free with fixed capacity)
 // =============================================================================
 
