@@ -34,6 +34,11 @@
 
 #include "signal-sbo.hpp"
 
+// Optional: Use variant-based slot storage for eliminating virtual dispatch
+#ifdef SIGSLOT_USE_SLOT_VARIANT
+    #include "slot-variant.hpp"
+#endif
+
 // Cache line size for preventing false sharing between threads.
 // When multiple threads access adjacent memory locations, they may experience
 // "false sharing" - cache invalidation even though they access different variables.
@@ -50,6 +55,9 @@ inline constexpr std::size_t sigslot_cache_line_size = 64;
 #endif
 
 namespace sigslot {
+
+// Forward declaration needed for slot_extended classes
+class connection;
 
 namespace detail {
 
@@ -1107,7 +1115,6 @@ class slot_base;
 template<typename Group, typename... T>
 using slot_ptr = slot_strong_ptr<slot_base<Group, T...>>;
 
-
 /** @brief A base class for slot objects. This base type only depends on slot argument
  * types, it will be used as an element in an intrusive singly-linked list of
  * slots, hence the public next member.
@@ -1116,9 +1123,32 @@ template<typename Group, typename... Args>
 class slot_base : public grouped_slot<Group> {
 public:
     using group_id = Group;
+    
+#ifdef SIGSLOT_USE_SLOT_VARIANT
+    // Inline function pointer for direct dispatch (eliminates vtable lookup)
+    // Returns true if call succeeded, false if slot expired (tracked slots)
+    using call_fn_t = bool(*)(slot_base*, Args...);
+    
+    explicit slot_base(cleanable<Group>& c, group_id const& gid, call_fn_t call_fn)
+        : grouped_slot<Group>(gid)
+        , cleaner(c)
+        , call_fn_(call_fn) {}
+    
+    // Fallback constructor using virtual dispatch (for extended slots)
+    explicit slot_base(cleanable<Group>& c, group_id const& gid)
+        : grouped_slot<Group>(gid)
+        , cleaner(c)
+        , call_fn_(&slot_base::virtual_dispatch) {}
+    
+    static bool virtual_dispatch(slot_base* self, Args... args) {
+        self->call_slot(args...);
+        return true;
+    }
+#else
     explicit slot_base(cleanable<Group>& c, group_id const& gid)
         : grouped_slot<Group>(gid)
         , cleaner(c) {}
+#endif
     ~slot_base() override = default;
 
     // method effectively responsible for calling the "slot" function with
@@ -1128,7 +1158,12 @@ public:
     template<typename... U>
     void operator()(U&&... u) {
         if (slot_state::connected() && !slot_state::blocked()) {
+#ifdef SIGSLOT_USE_SLOT_VARIANT
+            // Direct function pointer call - no vtable lookup
+            call_fn_(this, std::forward<U>(u)...);
+#else
             call_slot(std::forward<U>(u)...); // NOLINT(hicpp-no-array-decay)
+#endif
         }
     }
 
@@ -1170,6 +1205,9 @@ protected:
 
 private:
     cleanable<Group>& cleaner;
+#ifdef SIGSLOT_USE_SLOT_VARIANT
+    call_fn_t call_fn_;
+#endif
 };
 
 /**
@@ -1178,11 +1216,23 @@ private:
  */
 template<typename Group, typename Func, typename... Args>
 class slot final : public slot_base<Group, Args...> {
+    using base_t = slot_base<Group, Args...>;
 public:
     template<typename F>
     constexpr slot(cleanable<Group>& c, F&& f, Group const& gid)
-        : slot_base<Group, Args...>(c, gid)
+#ifdef SIGSLOT_USE_SLOT_VARIANT
+        : base_t(c, gid, &slot::call_fn_impl)
+#else
+        : base_t(c, gid)
+#endif
         , func{std::forward<F>(f)} {}
+
+#ifdef SIGSLOT_USE_SLOT_VARIANT
+    static bool call_fn_impl(base_t* self, Args... args) {
+        static_cast<slot*>(self)->func(args...);
+        return true;
+    }
+#endif
 
 protected:
     void call_slot(Args... args) override { func(args...); }
@@ -1198,10 +1248,12 @@ private:
  */
 template<typename Group, typename Func, typename... Args>
 class slot_extended final : public slot_base<Group, Args...> {
+    using base_t = slot_base<Group, Args...>;
 public:
     template<typename F>
     constexpr slot_extended(cleanable<Group>& c, F&& f, Group const& gid)
-        : slot_base<Group, Args...>(c, gid)
+        // Note: Extended slots use virtual dispatch (connection dependency prevents inline fn ptr)
+        : base_t(c, gid)
         , func{std::forward<F>(f)} {}
 
     connection conn; // TODO(CK): prevent public members!
@@ -1222,12 +1274,25 @@ private:
  */
 template<typename Group, typename Pmf, typename Ptr, typename... Args>
 class slot_pmf final : public slot_base<Group, Args...> {
+    using base_t = slot_base<Group, Args...>;
 public:
     template<typename F, typename P>
     constexpr slot_pmf(cleanable<Group>& c, F&& f, P&& p, Group const& gid)
-        : slot_base<Group, Args...>(c, gid)
+#ifdef SIGSLOT_USE_SLOT_VARIANT
+        : base_t(c, gid, &slot_pmf::call_fn_impl)
+#else
+        : base_t(c, gid)
+#endif
         , pmf{std::forward<F>(f)}
         , ptr{std::forward<P>(p)} {}
+
+#ifdef SIGSLOT_USE_SLOT_VARIANT
+    static bool call_fn_impl(base_t* self, Args... args) {
+        auto* s = static_cast<slot_pmf*>(self);
+        ((*s->ptr).*s->pmf)(args...);
+        return true;
+    }
+#endif
 
 protected:
     void call_slot(Args... args) override { ((*ptr).*pmf)(args...); }
@@ -1246,10 +1311,12 @@ private:
  */
 template<typename Group, typename Pmf, typename Ptr, typename... Args>
 class slot_pmf_extended final : public slot_base<Group, Args...> {
+    using base_t = slot_base<Group, Args...>;
 public:
     template<typename F, typename P>
     constexpr slot_pmf_extended(cleanable<Group>& c, F&& f, P&& p, Group const& gid)
-        : slot_base<Group, Args...>(c, gid)
+        // Note: Extended slots use virtual dispatch (connection dependency prevents inline fn ptr)
+        : base_t(c, gid)
         , pmf{std::forward<F>(f)}
         , ptr{std::forward<P>(p)} {}
 
@@ -1273,12 +1340,32 @@ private:
  */
 template<typename Group, typename Func, typename WeakPtr, typename... Args>
 class slot_tracked final : public slot_base<Group, Args...> {
+    using base_t = slot_base<Group, Args...>;
 public:
     template<typename F, typename P>
     constexpr slot_tracked(cleanable<Group>& c, F&& f, P&& p, Group const& gid)
-        : slot_base<Group, Args...>(c, gid)
+#ifdef SIGSLOT_USE_SLOT_VARIANT
+        : base_t(c, gid, &slot_tracked::call_fn_impl)
+#else
+        : base_t(c, gid)
+#endif
         , func{std::forward<F>(f)}
         , ptr{std::forward<P>(p)} {}
+
+#ifdef SIGSLOT_USE_SLOT_VARIANT
+    static bool call_fn_impl(base_t* self, Args... args) {
+        auto* s = static_cast<slot_tracked*>(self);
+        auto sp = s->ptr.lock();
+        if (!sp) {
+            s->disconnect();
+            return false;
+        }
+        if (s->connected()) {
+            s->func(args...);
+        }
+        return true;
+    }
+#endif
 
     [[nodiscard]] bool connected() const noexcept override {
         return !ptr.expired() && slot_state::connected();
@@ -1312,12 +1399,32 @@ private:
  */
 template<typename Group, typename Pmf, typename WeakPtr, typename... Args>
 class slot_pmf_tracked final : public slot_base<Group, Args...> {
+    using base_t = slot_base<Group, Args...>;
 public:
     template<typename F, typename P>
     constexpr slot_pmf_tracked(cleanable<Group>& c, F&& f, P&& p, Group const& gid)
-        : slot_base<Group, Args...>(c, gid)
+#ifdef SIGSLOT_USE_SLOT_VARIANT
+        : base_t(c, gid, &slot_pmf_tracked::call_fn_impl)
+#else
+        : base_t(c, gid)
+#endif
         , pmf{std::forward<F>(f)}
         , ptr{std::forward<P>(p)} {}
+
+#ifdef SIGSLOT_USE_SLOT_VARIANT
+    static bool call_fn_impl(base_t* self, Args... args) {
+        auto* s = static_cast<slot_pmf_tracked*>(self);
+        auto sp = s->ptr.lock();
+        if (!sp) {
+            s->disconnect();
+            return false;
+        }
+        if (s->connected()) {
+            ((*sp).*s->pmf)(args...);
+        }
+        return true;
+    }
+#endif
 
     [[nodiscard]] bool connected() const noexcept override {
         return !ptr.expired() && slot_state::connected();

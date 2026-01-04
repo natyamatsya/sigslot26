@@ -24,6 +24,7 @@ option(SIGSLOT_REDUCE_COMPILE_TIME "Attempt at reducing code size and compilatio
 option(SIGSLOT_ENABLE_STDEXEC "Enable std::execution support via NVIDIA stdexec" ON)
 option(SIGSLOT_ENABLE_BENCHMARK "Enable Google Benchmark support" OFF)
 option(SIGSLOT_USE_intrusive-ptr "Use intrusive reference counting instead of shared_ptr (experimental)" OFF)
+option(SIGSLOT_USE_SLOT_VARIANT "Use variant-based slot storage to eliminate virtual dispatch (experimental)" OFF)
 set(SIGSLOT_SLOT_ALLOCATOR "AUTO" CACHE STRING "Slot allocator: AUTO, DEFAULT, PMR, or ARENA")
 set_property(CACHE SIGSLOT_SLOT_ALLOCATOR PROPERTY STRINGS AUTO DEFAULT PMR ARENA)
 
@@ -96,7 +97,8 @@ target_compile_definitions(sigslot INTERFACE
     $<$<BOOL:${SIGSLOT_REDUCE_COMPILE_TIME}>:SIGSLOT_REDUCE_COMPILE_TIME>
     $<$<BOOL:${SIGSLOT_ENABLE_STDEXEC}>:SIGSLOT_HAVE_STDEXEC>
     $<$<NOT:$<EQUAL:${SIGSLOT_USE_SLOT_POOL},0>>:SIGSLOT_USE_SLOT_POOL=${SIGSLOT_USE_SLOT_POOL}>
-    $<$<BOOL:${SIGSLOT_USE_intrusive-ptr}>:SIGSLOT_USE_intrusive-ptr>
+    $<$<BOOL:${SIGSLOT_USE_intrusive-ptr}>:SIGSLOT_USE_INTRUSIVE_PTR>
+    $<$<BOOL:${SIGSLOT_USE_SLOT_VARIANT}>:SIGSLOT_USE_SLOT_VARIANT>
 )
 if(SIGSLOT_ENABLE_STDEXEC)
     target_link_libraries(sigslot INTERFACE STDEXEC::stdexec)
