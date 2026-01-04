@@ -8,3 +8,6 @@ target_link_libraries(threaded_benchmarks PRIVATE sigslot_benchmark)
 
 add_executable(sbo_benchmarks sbo_benchmarks.cpp)
 target_link_libraries(sbo_benchmarks PRIVATE sigslot_benchmark)
+
+add_executable(slot-variant-benchmarks slot-variant-benchmarks.cpp)
+target_link_libraries(slot-variant-benchmarks PRIVATE sigslot_benchmark)

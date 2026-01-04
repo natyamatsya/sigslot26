@@ -40,4 +40,13 @@ if(SIGSLOT_ENABLE_SBO_ANALYSIS)
     
     # Installation
     install(TARGETS analyze-sbo-layout DESTINATION ${CMAKE_INSTALL_BINDIR})
+    
+    # Slot Variant Analysis Tool (Phase 6.1)
+    add_executable(analyze-slot-variant analyze-slot-variant.cpp)
+    set_target_properties(analyze-slot-variant PROPERTIES
+        CXX_STANDARD 23
+        CXX_STANDARD_REQUIRED ON
+    )
+    target_link_libraries(analyze-slot-variant PRIVATE Pal::Sigslot)
+    install(TARGETS analyze-slot-variant DESTINATION ${CMAKE_INSTALL_BINDIR})
 endif()
