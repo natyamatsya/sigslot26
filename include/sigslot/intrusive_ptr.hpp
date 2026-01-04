@@ -30,6 +30,22 @@ protected:
     intrusive_refcount(const intrusive_refcount&) noexcept : m_refcount(0), m_arena_allocated(false) {}
     intrusive_refcount& operator=(const intrusive_refcount&) noexcept { return *this; }
     
+    /**
+     * @brief Override to customize destruction behavior
+     * 
+     * Default implementation checks m_arena_allocated flag.
+     * Derived classes can override for custom arena handling.
+     */
+    virtual void destroy() const {
+        if (m_arena_allocated) {
+            // Arena allocation: call destructor but don't free memory
+            this->~intrusive_refcount();
+        } else {
+            // Heap allocation: normal delete
+            delete this;
+        }
+    }
+    
 public:
     virtual ~intrusive_refcount() = default;
     
@@ -39,13 +55,7 @@ public:
     
     void release_ref() const noexcept {
         if (m_refcount.fetch_sub(1, std::memory_order_acq_rel) == 1) {
-            if (m_arena_allocated) {
-                // Arena allocation: call destructor but don't free memory
-                this->~intrusive_refcount();
-            } else {
-                // Heap allocation: normal delete
-                delete this;
-            }
+            destroy();
         }
     }
     
@@ -53,7 +63,7 @@ public:
         return m_refcount.load(std::memory_order_relaxed);
     }
     
-    // Mark as arena-allocated (called by make_slot_ptr)
+    // Mark as arena-allocated (used by default destroy() implementation)
     void set_arena_allocated() noexcept { m_arena_allocated = true; }
     [[nodiscard]] bool is_arena_allocated() const noexcept { return m_arena_allocated; }
 };
