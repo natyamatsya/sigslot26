@@ -302,13 +302,13 @@ public:
         // Construct storage in-place
         new (slot.storage_) storage_t(std::forward<Func>(f));
         
-        // Set up function pointers
+        // Set up function pointers (std::launder required after placement new)
         slot.call_ = [](void* s, Args... args) -> bool {
-            static_cast<storage_t*>(s)->call(std::forward<Args>(args)...);
+            std::launder(static_cast<storage_t*>(s))->call(std::forward<Args>(args)...);
             return true;
         };
         slot.destroy_ = [](void* s) {
-            static_cast<storage_t*>(s)->~storage_t();
+            std::launder(static_cast<storage_t*>(s))->~storage_t();
         };
         
         return slot;
@@ -330,12 +330,13 @@ public:
         
         new (slot.storage_) storage_t(std::forward<Pmf>(pmf), std::forward<Ptr>(ptr));
         
+        // std::launder required after placement new
         slot.call_ = [](void* s, Args... args) -> bool {
-            static_cast<storage_t*>(s)->call(std::forward<Args>(args)...);
+            std::launder(static_cast<storage_t*>(s))->call(std::forward<Args>(args)...);
             return true;
         };
         slot.destroy_ = [](void* s) {
-            static_cast<storage_t*>(s)->~storage_t();
+            std::launder(static_cast<storage_t*>(s))->~storage_t();
         };
         
         return slot;
@@ -357,11 +358,12 @@ public:
         
         new (slot.storage_) storage_t(std::forward<Func>(f), std::forward<WeakPtr>(ptr));
         
+        // std::launder required after placement new
         slot.call_ = [](void* s, Args... args) -> bool {
-            return static_cast<storage_t*>(s)->call_if_valid(std::forward<Args>(args)...);
+            return std::launder(static_cast<storage_t*>(s))->call_if_valid(std::forward<Args>(args)...);
         };
         slot.destroy_ = [](void* s) {
-            static_cast<storage_t*>(s)->~storage_t();
+            std::launder(static_cast<storage_t*>(s))->~storage_t();
         };
         
         return slot;
@@ -383,11 +385,12 @@ public:
         
         new (slot.storage_) storage_t(std::forward<Pmf>(pmf), std::forward<WeakPtr>(ptr));
         
+        // std::launder required after placement new
         slot.call_ = [](void* s, Args... args) -> bool {
-            return static_cast<storage_t*>(s)->call_if_valid(std::forward<Args>(args)...);
+            return std::launder(static_cast<storage_t*>(s))->call_if_valid(std::forward<Args>(args)...);
         };
         slot.destroy_ = [](void* s) {
-            static_cast<storage_t*>(s)->~storage_t();
+            std::launder(static_cast<storage_t*>(s))->~storage_t();
         };
         
         return slot;
