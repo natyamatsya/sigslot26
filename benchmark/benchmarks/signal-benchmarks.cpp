@@ -1,6 +1,7 @@
 // Single-threaded benchmarks for sigslot
 #include <benchmark/benchmark.h>
 #include <sigslot/signal.hpp>
+#include <functional>
 
 static void BM_SignalConstruction(benchmark::State& state) {
     for (auto _ : state) {
@@ -115,6 +116,47 @@ static void BM_EmissionRegular1000(benchmark::State& state) {
     state.SetItemsProcessed(state.iterations() * 1000);
 }
 
+// Prevent devirtualization by using volatile function pointer
+static volatile int g_sink = 0;
+static void noinline_slot(int x) { g_sink = x; }
+
+// Use std::function to prevent compile-time type resolution
+static void BM_EmissionStdFunction(benchmark::State& state) {
+    sigslot::signal<int> sig;
+    std::function<void(int)> fn = [](int x) { benchmark::DoNotOptimize(x); };
+    sig.connect(fn);
+    
+    for (auto _ : state) {
+        sig(42);
+    }
+}
+
+// Use function pointer (type-erased) to prevent devirtualization
+static void BM_EmissionFunctionPtr(benchmark::State& state) {
+    sigslot::signal<int> sig;
+    void (*volatile fp)(int) = noinline_slot;  // volatile prevents optimization
+    sig.connect(fp);
+    
+    for (auto _ : state) {
+        sig(42);
+    }
+}
+
+// Multiple mixed slot types to stress the dispatch mechanism
+static void BM_EmissionMixedTypes(benchmark::State& state) {
+    sigslot::signal<int> sig;
+    
+    // Mix of different slot types
+    sig.connect([](int x) { benchmark::DoNotOptimize(x); });  // lambda
+    sig.connect(noinline_slot);  // function pointer
+    std::function<void(int)> fn = [](int x) { benchmark::DoNotOptimize(x); };
+    sig.connect(fn);  // std::function
+    
+    for (auto _ : state) {
+        sig(42);
+    }
+}
+
 BENCHMARK(BM_SignalConstruction);
 BENCHMARK(BM_SignalDestruction);
 BENCHMARK(BM_ConnectSingleSlot);
@@ -125,5 +167,8 @@ BENCHMARK(BM_EmissionBatch100);
 BENCHMARK(BM_EmissionRegular100);
 BENCHMARK(BM_EmissionBatch1000);
 BENCHMARK(BM_EmissionRegular1000);
+BENCHMARK(BM_EmissionStdFunction);
+BENCHMARK(BM_EmissionFunctionPtr);
+BENCHMARK(BM_EmissionMixedTypes);
 
 BENCHMARK_MAIN();

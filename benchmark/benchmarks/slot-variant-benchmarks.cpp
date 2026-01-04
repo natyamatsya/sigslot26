@@ -2,6 +2,7 @@
 #include <benchmark/benchmark.h>
 #include <sigslot/signal.hpp>
 #include <sigslot/slot-variant.hpp>
+#include <sigslot/signal-inline.hpp>
 #include <vector>
 #include <memory>
 
@@ -167,22 +168,147 @@ static void BM_SlotVariant_SizeOf(benchmark::State& state) {
 }
 
 // ============================================================================
+// Cache locality stress test - many slots
+// ============================================================================
+
+static void BM_VirtualDispatch_100Slots(benchmark::State& state) {
+    sigslot::signal<int> sig;
+    for (int i = 0; i < 100; ++i) {
+        sig.connect([](int x) { benchmark::DoNotOptimize(x); });
+    }
+    
+    for (auto _ : state) {
+        sig(42);
+    }
+    state.SetItemsProcessed(state.iterations() * 100);
+}
+
+static void BM_SlotVariant_100Slots_Inline(benchmark::State& state) {
+    using slot_t = sigslot::detail::slot_variant<int32_t, int>;
+    
+    // Inline storage - contiguous in memory
+    std::vector<slot_t> slots;
+    slots.reserve(100);
+    for (int i = 0; i < 100; ++i) {
+        slots.push_back(slot_t::make_plain(
+            [](int x) { benchmark::DoNotOptimize(x); },
+            int32_t{0}
+        ));
+    }
+    
+    for (auto _ : state) {
+        for (auto& slot : slots) {
+            slot(42);
+        }
+    }
+    state.SetItemsProcessed(state.iterations() * 100);
+}
+
+static void BM_SlotVariant_100Slots_Pointer(benchmark::State& state) {
+    using slot_t = sigslot::detail::slot_variant<int32_t, int>;
+    
+    // Pointer-based storage - scattered in memory (simulates current impl)
+    std::vector<std::unique_ptr<slot_t>> slots;
+    slots.reserve(100);
+    for (int i = 0; i < 100; ++i) {
+        slots.push_back(std::make_unique<slot_t>(slot_t::make_plain(
+            [](int x) { benchmark::DoNotOptimize(x); },
+            int32_t{0}
+        )));
+    }
+    
+    for (auto _ : state) {
+        for (auto& slot : slots) {
+            (*slot)(42);
+        }
+    }
+    state.SetItemsProcessed(state.iterations() * 100);
+}
+
+// ============================================================================
+// signal_inline benchmarks - full signal with inline storage
+// ============================================================================
+
+static void BM_SignalInline_SingleSlot(benchmark::State& state) {
+    sigslot::signal_inline<int> sig;
+    sig.connect([](int x) { benchmark::DoNotOptimize(x); });
+    
+    for (auto _ : state) {
+        sig(42);
+    }
+}
+
+static void BM_SignalInline_10Slots(benchmark::State& state) {
+    sigslot::signal_inline<int> sig;
+    for (int i = 0; i < 10; ++i) {
+        sig.connect([](int x) { benchmark::DoNotOptimize(x); });
+    }
+    
+    for (auto _ : state) {
+        sig(42);
+    }
+}
+
+static void BM_SignalInline_100Slots(benchmark::State& state) {
+    sigslot::signal_inline<int> sig;
+    sig.reserve(100);
+    for (int i = 0; i < 100; ++i) {
+        sig.connect([](int x) { benchmark::DoNotOptimize(x); });
+    }
+    
+    for (auto _ : state) {
+        sig(42);
+    }
+    state.SetItemsProcessed(state.iterations() * 100);
+}
+
+static void BM_SignalInline_Connect(benchmark::State& state) {
+    sigslot::signal_inline<int> sig;
+    
+    for (auto _ : state) {
+        sig.connect([](int x) { benchmark::DoNotOptimize(x); });
+        sig.disconnect_all();
+    }
+}
+
+static void BM_SignalInline_PMF(benchmark::State& state) {
+    sigslot::signal_inline<int> sig;
+    TestReceiver receiver;
+    sig.connect(&TestReceiver::on_signal, &receiver);
+    
+    for (auto _ : state) {
+        sig(42);
+        benchmark::DoNotOptimize(receiver.value);
+    }
+}
+
+// ============================================================================
 // Register benchmarks
 // ============================================================================
 
-// Emission benchmarks
+// Emission benchmarks - compare all three approaches
 BENCHMARK(BM_VirtualDispatch_SingleSlot);
 BENCHMARK(BM_SlotVariant_SingleSlot);
+BENCHMARK(BM_SignalInline_SingleSlot);
+
 BENCHMARK(BM_VirtualDispatch_10Slots);
 BENCHMARK(BM_SlotVariant_10Slots);
+BENCHMARK(BM_SignalInline_10Slots);
+
+BENCHMARK(BM_VirtualDispatch_100Slots);
+BENCHMARK(BM_SlotVariant_100Slots_Inline);
+BENCHMARK(BM_SlotVariant_100Slots_Pointer);
+BENCHMARK(BM_SignalInline_100Slots);
 
 // Construction benchmarks
 BENCHMARK(BM_VirtualDispatch_Connect);
 BENCHMARK(BM_SlotVariant_Construct);
+BENCHMARK(BM_SignalInline_Connect);
 
 // PMF benchmarks
 BENCHMARK(BM_VirtualDispatch_PMF);
 BENCHMARK(BM_SlotVariant_PMF);
+BENCHMARK(BM_SignalInline_PMF);
 
 // Tracked benchmarks
 BENCHMARK(BM_VirtualDispatch_Tracked);

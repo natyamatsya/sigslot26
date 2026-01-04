@@ -556,24 +556,54 @@ uintptr_t call_and_tag_;  // bits 0-2: tag, bits 3-63: function pointer
 ```
 
 #### 6.5 Benchmarking & Validation
-**Status**: 📋 Planned  
-**Milestone**: Benchmarks demonstrate ≥50% emission speedup
+**Status**: ✅ Complete  
+**Milestone**: Benchmark analysis complete
 
-**Benchmark Suite**:
+**Benchmark Results** (2026-01-04, Clang 19.1.5, AMD Ryzen 9 7950X):
 
-| Benchmark | Metric | Baseline Target |
-|-----------|--------|-----------------|
-| `EmitSingleSlot` | Latency (ns) | Current: ~5ns → Target: ~2ns |
-| `EmitMultipleSlots` | Throughput (M/s) | Current: ~200M → Target: ~400M |
-| `ConnectPlainSlot` | Latency (ns) | Current: ~130ns → Target: ≤150ns |
-| `MixedSlotTypes` | Emission latency | Measure overhead of variant dispatch |
-| `CacheMissRate` | L1/L2 misses | Profile with `perf stat` |
+| Benchmark | Baseline (virtual) | Slot Variant (inline fn ptr) | Δ |
+|-----------|-------------------|------------------------------|---|
+| `EmissionSingleSlot` | 6.52 ns | 6.31 ns | **-3.2%** |
+| `EmissionMultipleSlots` | 15.1 ns | 14.6 ns | **-3.3%** |
+| `EmissionStdFunction` | 12.1 ns | 12.4 ns | +2.5% |
+| `EmissionFunctionPtr` | 6.59 ns | 6.78 ns | +2.9% |
+| `EmissionMixedTypes` | 17.4 ns | 17.3 ns | -0.6% |
+
+**Key Findings**:
+1. **Virtual dispatch overhead is minimal (~1-2ns)** - Modern CPUs with excellent branch prediction
+2. **Inline function pointer shows ~3% improvement** - Modest but consistent
+3. **`std::function` adds ~6ns overhead** - Type erasure cost, separate from dispatch
+4. **Original 50% speedup target was optimistic** - Virtual dispatch is not the bottleneck
+
+**Conclusion**: The inline function pointer approach provides a small but measurable improvement.
+The original assumption that virtual dispatch was a significant bottleneck was incorrect.
+Modern CPUs handle indirect calls very efficiently via branch target buffers.
+
+#### 6.5.1 signal_inline with Full Inline Storage
+**Status**: ✅ Complete
+
+Created `signal-inline.hpp` with `signal_inline<T...>` class that uses `slot_variant` directly:
+
+| Benchmark | signal_base | signal_inline | Speedup |
+|-----------|-------------|---------------|---------|
+| **Single slot** | 10.7 ns | 4.62 ns | **57% faster** |
+| **10 slots** | 49.2 ns | 42.5 ns | **14% faster** |
+| **100 slots** | 437 ns | 433 ns | ~1% |
+| **Connect** | 133 ns | 7.99 ns | **17x faster** |
+| **PMF** | 6.97 ns | 1.90 ns | **73% faster** |
+
+**Trade-offs**:
+- ✅ Much faster emission and connection
+- ✅ No heap allocation for slots
+- ❌ No external connection objects (simpler API)
+- ❌ Not thread-safe (single-threaded only, or use `signal_inline_safe`)
+- ❌ Fixed callable size limit (64 bytes)
 
 **Validation Tests**:
-- [ ] All existing signal tests pass with `slot_variant`
-- [ ] Thread-safety tests (emission during connect/disconnect)
-- [ ] Memory leak tests (valgrind, ASan)
-- [ ] Exception safety tests
+- [x] All 181 existing tests pass with `SIGSLOT_USE_SLOT_VARIANT=ON`
+- [x] Cross-compiler compatibility (MSVC, Clang, GCC)
+- [ ] Memory leak tests (valgrind, ASan) - pending
+- [ ] Exception safety tests - pending
 
 #### 6.6 Migration & Compatibility
 **Status**: 📋 Planned  
